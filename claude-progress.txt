@@ -361,3 +361,62 @@ lib/db/index.ts - Added invitation_status, invitation_token, invitation_expires_
 - All invitation emails are logged to console in dev mode
 - Test user: test_session4_unique@example.com / TestPass123! (admin)
 - Invited user: invited_test_user@example.com (pending, Risk Manager)
+
+---
+
+## Session 6 Summary (Coding Agent)
+Date: 2026-01-06
+
+### Completed Features
+
+1. **Feature #32: Create subcontractor manually** ✅
+   - Subcontractors page at /dashboard/subcontractors
+   - Add Subcontractor modal with all fields:
+     - Company Details: Name*, ABN*, Trading Name, Trade, Address
+     - Contact Details: Name, Email, Phone
+     - Broker Details: Name, Email, Phone
+   - ABN auto-formatting (XX XXX XXX XXX)
+   - Success notification on creation
+   - Data persists after page refresh
+   - Search functionality works
+
+2. **Feature #33: ABN validation on subcontractor entry** ✅
+   - ABN format validation (must be 11 digits)
+   - Australian ABN checksum algorithm validation
+   - ABR API lookup endpoint (/api/external/abn/[abn])
+   - Mock ABR data for development (ABC, Telstra, etc.)
+   - "Verify" button next to ABN field
+   - Auto-populate company name from ABN lookup
+   - Visual feedback:
+     - Red border + error message for invalid ABN
+     - Green border + checkmark for valid ABN
+     - Success toast with entity name
+
+### Key Files Created/Modified
+
+```
+app/api/subcontractors/route.ts - Added ABN format and checksum validation
+app/api/external/abn/[abn]/route.ts - NEW: ABN lookup API endpoint
+app/dashboard/subcontractors/page.tsx - NEW: Subcontractors list and add modal
+```
+
+### ABN Validation Implementation
+
+The ABN validation uses the official Australian checksum algorithm:
+1. Subtract 1 from first digit
+2. Multiply each digit by weights [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
+3. Sum all products
+4. Valid if sum % 89 === 0
+
+### Feature Statistics
+- Total Features: 220
+- Passing: 32
+- In Progress: 0
+- Percentage Complete: 14.5%
+
+### Notes for Next Agent
+- Dev server runs on port 3003
+- Next feature: #34 - Bulk import subcontractors from CSV
+- Subcontractors page is fully functional with ABN validation
+- Test user: test_session4_unique@example.com / TestPass123! (admin)
+- Test subcontractor created: "TEST_VERIFY_12345 Plumbing Pty Ltd" (ABN: 99887766554)
