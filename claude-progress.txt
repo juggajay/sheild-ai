@@ -473,3 +473,72 @@ app/dashboard/subcontractors/page.tsx - Already has CSV import with duplicate ha
 - Subcontractor added to Brisbane Commercial Plaza project: TEST_VERIFY_12345 Plumbing Pty Ltd
 - CSV import duplicate detection working - test file: test_import_duplicates.csv
 - Merged subcontractor visible: DUPLICATE_TEST_67890 (was Import Test Company 1)
+
+---
+
+## Session 8 Summary (Coding Agent)
+Date: 2026-01-06
+
+### Completed Features
+
+1. **Feature #37: Remove subcontractor from project** ✅
+   - Created DELETE endpoint in /api/projects/[id]/subcontractors/route.ts
+   - Added project subcontractors list display in project detail page
+   - Shows subcontractor name, status badge, ABN, trade, and on-site date
+   - Added remove button (trash icon) for each subcontractor
+   - Added confirmation dialog with warning about project-only removal
+   - Subcontractor record remains in company's global list after removal
+   - Audit logging for removal action
+   - Verified end-to-end with browser automation
+
+2. **Feature #38: Upload COC via drag-and-drop** ✅
+   - Created Documents page at /dashboard/documents
+   - Created documents API at /api/documents (GET, POST)
+   - Created document detail API at /api/documents/[id] (GET, DELETE)
+   - Drag-and-drop upload zone with visual feedback
+   - File validation (PDF and images only, max 10MB)
+   - Project and subcontractor selection for uploads
+   - Upload progress indicator
+   - Documents list with status badges (Pass/Fail/Review)
+   - Processing status indicator (Pending/Processing/Completed)
+   - View and download buttons for each document
+   - File stored in /public/uploads/documents/
+   - Verification record created automatically
+   - Audit logging for uploads
+
+3. **Feature #39: Multi-file COC upload** ✅
+   - Updated upload modal to support multiple file selection
+   - "multiple" attribute on file input
+   - File list display with individual remove buttons
+   - "Clear all" button to remove all selected files
+   - Sequential upload of all files with progress tracking
+   - Shows "Uploading X of Y..." during upload
+   - Success message with count of uploaded files
+   - All files linked to same project/subcontractor
+   - Verified with 5 file upload test
+
+### Key Files Created/Modified
+
+```
+app/api/documents/route.ts - NEW: Documents list/upload API
+app/api/documents/[id]/route.ts - NEW: Document detail/delete API
+app/dashboard/documents/page.tsx - NEW: Documents page with drag-drop upload
+app/dashboard/projects/[id]/page.tsx - Added subcontractors list, remove modal
+app/api/projects/[id]/subcontractors/route.ts - Added DELETE endpoint
+public/uploads/documents/ - NEW: Upload storage directory
+```
+
+### Feature Statistics
+- Total Features: 220
+- Passing: 38
+- In Progress: 0
+- Percentage Complete: 17.3%
+
+### Notes for Next Agent
+- Dev server runs on port 3000
+- Next feature: Use `feature_get_next` to get it
+- Test user: test_session4_unique@example.com / TestPass123! (admin)
+- Documents page fully functional with multi-file upload
+- Test COC documents uploaded: test_coc.pdf, test_coc_1.pdf through test_coc_5.pdf
+- Sydney Office Tower project has 6 documents attached
+- Subcontractor "Test Subcontractor for Exceptions" has COC documents

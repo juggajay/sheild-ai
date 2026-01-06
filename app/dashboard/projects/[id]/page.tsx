@@ -75,6 +75,17 @@ interface Subcontractor {
   trade: string | null
 }
 
+interface ProjectSubcontractor {
+  project_subcontractor_id: string
+  id: string
+  name: string
+  abn: string
+  trade: string | null
+  status: string
+  on_site_date: string | null
+  assigned_at: string
+}
+
 interface InsuranceRequirement {
   id?: string
   coverage_type: string
@@ -111,6 +122,10 @@ export default function ProjectDetailPage() {
   const [notFound, setNotFound] = useState(false)
   const [userRole, setUserRole] = useState<string | null>(null)
 
+  // Project subcontractors state
+  const [projectSubcontractors, setProjectSubcontractors] = useState<ProjectSubcontractor[]>([])
+  const [isLoadingSubcontractors, setIsLoadingSubcontractors] = useState(false)
+
   // Add subcontractor modal state
   const [showAddSubModal, setShowAddSubModal] = useState(false)
   const [availableSubcontractors, setAvailableSubcontractors] = useState<Subcontractor[]>([])
@@ -118,6 +133,11 @@ export default function ProjectDetailPage() {
   const [onSiteDate, setOnSiteDate] = useState('')
   const [subSearchQuery, setSubSearchQuery] = useState('')
   const [isAddingSub, setIsAddingSub] = useState(false)
+
+  // Remove subcontractor modal state
+  const [showRemoveSubModal, setShowRemoveSubModal] = useState(false)
+  const [subcontractorToRemove, setSubcontractorToRemove] = useState<ProjectSubcontractor | null>(null)
+  const [isRemovingSub, setIsRemovingSub] = useState(false)
 
   // Delete confirmation modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -139,6 +159,7 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     fetchUserRole()
     fetchProject()
+    fetchProjectSubcontractors()
   }, [params.id])
 
   const fetchUserRole = async () => {
@@ -176,6 +197,21 @@ export default function ProjectDetailPage() {
           variant: "destructive"
         })
       }
+    }
+  }
+
+  const fetchProjectSubcontractors = async () => {
+    setIsLoadingSubcontractors(true)
+    try {
+      const response = await fetch(`/api/projects/${params.id}/subcontractors`)
+      if (response.ok) {
+        const data = await response.json()
+        setProjectSubcontractors(data.subcontractors || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch project subcontractors:', error)
+    } finally {
+      setIsLoadingSubcontractors(false)
     }
   }
 
@@ -231,6 +267,7 @@ export default function ProjectDetailPage() {
       setShowAddSubModal(false)
       setSelectedSubcontractorId('')
       fetchProject() // Refresh project data
+      fetchProjectSubcontractors() // Refresh subcontractors list
     } catch (error) {
       toast({
         title: "Error",
@@ -239,6 +276,48 @@ export default function ProjectDetailPage() {
       })
     } finally {
       setIsAddingSub(false)
+    }
+  }
+
+  const handleOpenRemoveSubModal = (sub: ProjectSubcontractor) => {
+    setSubcontractorToRemove(sub)
+    setShowRemoveSubModal(true)
+  }
+
+  const handleRemoveSubcontractor = async () => {
+    if (!subcontractorToRemove) return
+
+    setIsRemovingSub(true)
+    try {
+      const response = await fetch(`/api/projects/${params.id}/subcontractors`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subcontractorId: subcontractorToRemove.id })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to remove subcontractor')
+      }
+
+      toast({
+        title: "Success",
+        description: `${subcontractorToRemove.name} removed from project`
+      })
+
+      setShowRemoveSubModal(false)
+      setSubcontractorToRemove(null)
+      fetchProject() // Refresh project data
+      fetchProjectSubcontractors() // Refresh subcontractors list
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Failed to remove subcontractor',
+        variant: "destructive"
+      })
+    } finally {
+      setIsRemovingSub(false)
     }
   }
 
@@ -694,11 +773,56 @@ export default function ProjectDetailPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="text-center py-8 text-slate-500">
-                  <Users className="h-12 w-12 mx-auto mb-3 text-slate-300" />
-                  <p>No subcontractors yet</p>
-                  <p className="text-sm">Add subcontractors to get started</p>
-                </div>
+                {isLoadingSubcontractors ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="h-8 w-8 mx-auto animate-spin text-slate-400" />
+                    <p className="text-sm text-slate-500 mt-2">Loading subcontractors...</p>
+                  </div>
+                ) : projectSubcontractors.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">
+                    <Users className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                    <p>No subcontractors yet</p>
+                    <p className="text-sm">Add subcontractors to get started</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {projectSubcontractors.map((sub) => (
+                      <div key={sub.project_subcontractor_id} className="py-4 flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <div className="font-medium text-slate-900">{sub.name}</div>
+                            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+                              sub.status === 'compliant' ? 'bg-green-100 text-green-700' :
+                              sub.status === 'non_compliant' ? 'bg-red-100 text-red-700' :
+                              sub.status === 'exception' ? 'bg-purple-100 text-purple-700' :
+                              'bg-amber-100 text-amber-700'
+                            }`}>
+                              {sub.status === 'non_compliant' ? 'Non-Compliant' :
+                               sub.status.charAt(0).toUpperCase() + sub.status.slice(1)}
+                            </span>
+                          </div>
+                          <div className="text-sm text-slate-500 mt-1">
+                            <span>ABN: {sub.abn}</span>
+                            {sub.trade && <span className="ml-3">• {sub.trade}</span>}
+                            {sub.on_site_date && (
+                              <span className="ml-3">• On-site: {new Date(sub.on_site_date).toLocaleDateString()}</span>
+                            )}
+                          </div>
+                        </div>
+                        {canModify && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => handleOpenRemoveSubModal(sub)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -953,6 +1077,43 @@ export default function ProjectDetailPage() {
               disabled={isDeleting}
             >
               {isDeleting ? 'Deleting...' : 'Delete Project'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Remove Subcontractor Confirmation Modal */}
+      <Dialog open={showRemoveSubModal} onOpenChange={setShowRemoveSubModal}>
+        <DialogContent onClose={() => setShowRemoveSubModal(false)}>
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                <Trash2 className="h-5 w-5 text-red-600" />
+              </div>
+              <DialogTitle>Remove Subcontractor</DialogTitle>
+            </div>
+            <DialogDescription>
+              Are you sure you want to remove <strong>{subcontractorToRemove?.name}</strong> from this project?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-4 mt-4">
+            <p className="text-sm text-blue-800">
+              <strong>Note:</strong> This will only remove the subcontractor from this project. The subcontractor record will still exist in your company&apos;s subcontractor list.
+            </p>
+          </div>
+
+          <DialogFooter className="mt-6">
+            <Button type="button" variant="outline" onClick={() => setShowRemoveSubModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleRemoveSubcontractor}
+              disabled={isRemovingSub}
+            >
+              {isRemovingSub ? 'Removing...' : 'Remove from Project'}
             </Button>
           </DialogFooter>
         </DialogContent>
