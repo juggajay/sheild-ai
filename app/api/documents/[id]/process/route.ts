@@ -25,6 +25,16 @@ interface Subcontractor {
   contact_email?: string
 }
 
+interface EmailTemplate {
+  id: string
+  company_id: string | null
+  type: string
+  name: string | null
+  subject: string | null
+  body: string | null
+  is_default: number
+}
+
 interface InsuranceRequirement {
   id: string
   coverage_type: string
@@ -428,6 +438,45 @@ function formatCoverageType(type: string): string {
   return names[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
 }
 
+// Get email template for a specific type and company
+function getEmailTemplate(db: ReturnType<typeof getDb>, companyId: string, templateType: string): EmailTemplate | null {
+  // First try to get company-specific template
+  let template = db.prepare(`
+    SELECT * FROM email_templates
+    WHERE company_id = ? AND type = ?
+    ORDER BY is_default ASC
+    LIMIT 1
+  `).get(companyId, templateType) as EmailTemplate | undefined
+
+  // Fall back to system default if no company template
+  if (!template) {
+    template = db.prepare(`
+      SELECT * FROM email_templates
+      WHERE company_id IS NULL AND type = ? AND is_default = 1
+      LIMIT 1
+    `).get(templateType) as EmailTemplate | undefined
+  }
+
+  return template || null
+}
+
+// Apply template variables to subject and body
+function applyTemplateVariables(
+  template: { subject: string | null; body: string | null },
+  variables: Record<string, string>
+): { subject: string; body: string } {
+  let subject = template.subject || ''
+  let body = template.body || ''
+
+  for (const [key, value] of Object.entries(variables)) {
+    const regex = new RegExp(`\\{\\{${key}\\}\\}`, 'g')
+    subject = subject.replace(regex, value)
+    body = body.replace(regex, value)
+  }
+
+  return { subject, body }
+}
+
 // POST /api/documents/[id]/process - Process document with AI extraction
 export async function POST(
   request: NextRequest,
@@ -568,9 +617,34 @@ export async function POST(
           `• ${d.description}\n  Severity: ${d.severity.toUpperCase()}\n  Required: ${d.required_value || 'N/A'}\n  Actual: ${d.actual_value || 'N/A'}`
         ).join('\n\n')
 
-        // Create email subject and body
-        const emailSubject = `Certificate of Currency Deficiency Notice - ${subcontractor.name} / ${projectName}`
-        const emailBody = `Dear ${recipientName},
+        // Calculate due date (14 days from now)
+        const dueDate = new Date()
+        dueDate.setDate(dueDate.getDate() + 14)
+        const dueDateStr = dueDate.toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
+
+        // Try to get custom template, fall back to default
+        const template = getEmailTemplate(db, user.company_id, 'deficiency')
+
+        let emailSubject: string
+        let emailBody: string
+
+        if (template && template.subject && template.body) {
+          // Use custom template with variable substitution
+          const result = applyTemplateVariables(template, {
+            subcontractor_name: subcontractor.name,
+            subcontractor_abn: subcontractor.abn,
+            project_name: projectName,
+            recipient_name: recipientName,
+            deficiency_list: deficiencyList,
+            upload_link: uploadLink,
+            due_date: dueDateStr
+          })
+          emailSubject = result.subject
+          emailBody = result.body
+        } else {
+          // Fallback to hardcoded default
+          emailSubject = `Certificate of Currency Deficiency Notice - ${subcontractor.name} / ${projectName}`
+          emailBody = `Dear ${recipientName},
 
 We have identified deficiencies in the Certificate of Currency submitted for ${subcontractor.name} (ABN: ${subcontractor.abn}) on the ${projectName} project.
 
@@ -588,6 +662,7 @@ If you have any questions, please contact our project team.
 
 Best regards,
 RiskShield AI Compliance Team`
+        }
 
         // Get or create verification ID for linking
         let verificationId = document.verification_id
@@ -642,9 +717,26 @@ RiskShield AI Compliance Team`
       const recipientName = subcontractor.broker_name || subcontractor.contact_name || 'Insurance Contact'
 
       if (recipientEmail) {
-        // Create confirmation email subject and body
-        const emailSubject = `Insurance Compliance Confirmed - ${subcontractor.name} / ${projectName}`
-        const emailBody = `Dear ${recipientName},
+        // Try to get custom confirmation template
+        const template = getEmailTemplate(db, user.company_id, 'confirmation')
+
+        let emailSubject: string
+        let emailBody: string
+
+        if (template && template.subject && template.body) {
+          // Use custom template with variable substitution
+          const result = applyTemplateVariables(template, {
+            subcontractor_name: subcontractor.name,
+            subcontractor_abn: subcontractor.abn,
+            project_name: projectName,
+            recipient_name: recipientName
+          })
+          emailSubject = result.subject
+          emailBody = result.body
+        } else {
+          // Fallback to hardcoded default
+          emailSubject = `Insurance Compliance Confirmed - ${subcontractor.name} / ${projectName}`
+          emailBody = `Dear ${recipientName},
 
 Great news! The Certificate of Currency submitted for ${subcontractor.name} (ABN: ${subcontractor.abn}) has been verified and meets all requirements for the ${projectName} project.
 
@@ -656,6 +748,7 @@ Thank you for ensuring compliance with our insurance requirements. If you have a
 
 Best regards,
 RiskShield AI Compliance Team`
+        }
 
         // Get or create verification ID for linking
         let verificationId = document.verification_id
