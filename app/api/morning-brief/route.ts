@@ -139,6 +139,59 @@ export async function GET(request: NextRequest) {
       needs_review: number
     }
 
+    // Get pending responses - failed verifications where we sent a communication but haven't received a new COC
+    // This finds the most recent failed verification for each subcontractor/project combo
+    // and checks if there's been a follow-up COC since the last communication
+    const pendingResponses = db.prepare(`
+      SELECT
+        v.id as verification_id,
+        v.status as verification_status,
+        v.created_at as verification_date,
+        d.id as document_id,
+        d.file_name,
+        s.id as subcontractor_id,
+        s.name as subcontractor_name,
+        s.contact_email as broker_email,
+        p.id as project_id,
+        p.name as project_name,
+        c.id as communication_id,
+        c.sent_at as last_communication_date,
+        c.type as communication_type,
+        CAST(julianday('now') - julianday(c.sent_at) AS INTEGER) as days_waiting
+      FROM verifications v
+      JOIN coc_documents d ON v.coc_document_id = d.id
+      JOIN subcontractors s ON d.subcontractor_id = s.id
+      JOIN projects p ON d.project_id = p.id
+      JOIN communications c ON c.verification_id = v.id
+      WHERE p.company_id = ?
+        AND v.status = 'fail'
+        AND c.status IN ('sent', 'delivered', 'opened')
+        AND NOT EXISTS (
+          -- No newer COC uploaded after the communication for this subcontractor/project
+          SELECT 1 FROM coc_documents d2
+          WHERE d2.subcontractor_id = s.id
+            AND d2.project_id = p.id
+            AND d2.received_at > c.sent_at
+        )
+      ORDER BY days_waiting DESC
+      LIMIT 10
+    `).all(user.company_id) as Array<{
+      verification_id: string
+      verification_status: string
+      verification_date: string
+      document_id: string
+      file_name: string
+      subcontractor_id: string
+      subcontractor_name: string
+      broker_email: string | null
+      project_id: string
+      project_name: string
+      communication_id: string
+      last_communication_date: string
+      communication_type: string
+      days_waiting: number
+    }>
+
     return NextResponse.json({
       stopWorkRisks,
       stats: {
@@ -146,6 +199,7 @@ export async function GET(request: NextRequest) {
         activeProjects: activeProjectsResult.count,
         pendingReviews: pendingReviewsResult.count,
         stopWorkCount: stopWorkRisks.length,
+        pendingResponsesCount: pendingResponses.length,
         ...complianceStats
       },
       newCocs,
@@ -153,7 +207,8 @@ export async function GET(request: NextRequest) {
         total: cocStats.total || 0,
         autoApproved: cocStats.auto_approved || 0,
         needsReview: cocStats.needs_review || 0
-      }
+      },
+      pendingResponses
     })
 
   } catch (error) {

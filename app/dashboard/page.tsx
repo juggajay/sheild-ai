@@ -13,7 +13,9 @@ import {
   ChevronRight,
   ExternalLink,
   FileWarning,
-  ShieldAlert
+  ShieldAlert,
+  Mail,
+  RefreshCw
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -59,6 +61,23 @@ interface CocStats {
   needsReview: number
 }
 
+interface PendingResponse {
+  verification_id: string
+  verification_status: string
+  verification_date: string
+  document_id: string
+  file_name: string
+  subcontractor_id: string
+  subcontractor_name: string
+  broker_email: string | null
+  project_id: string
+  project_name: string
+  communication_id: string
+  last_communication_date: string
+  communication_type: string
+  days_waiting: number
+}
+
 interface MorningBriefData {
   stopWorkRisks: StopWorkRisk[]
   stats: {
@@ -66,6 +85,7 @@ interface MorningBriefData {
     activeProjects: number
     pendingReviews: number
     stopWorkCount: number
+    pendingResponsesCount: number
     total: number
     compliant: number
     non_compliant: number
@@ -74,6 +94,7 @@ interface MorningBriefData {
   }
   newCocs: NewCoc[]
   cocStats: CocStats
+  pendingResponses: PendingResponse[]
 }
 
 export default function DashboardPage() {
@@ -288,6 +309,41 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Pending Responses Section */}
+        <Card className={morningBrief?.pendingResponses?.length ? "border-amber-200 bg-amber-50/30" : ""}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Mail className={`h-5 w-5 ${morningBrief?.pendingResponses?.length ? "text-amber-500" : "text-slate-400"}`} />
+                  Pending Responses
+                </CardTitle>
+                <CardDescription>Brokers who haven&apos;t responded to deficiency notices</CardDescription>
+              </div>
+              {morningBrief?.pendingResponses && morningBrief.pendingResponses.length > 0 && (
+                <Badge variant="outline" className="bg-amber-100 text-amber-700">
+                  {morningBrief.pendingResponses.length} Waiting
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {morningBrief?.pendingResponses?.length ? (
+              <div className="space-y-3">
+                {morningBrief.pendingResponses.map((response) => (
+                  <PendingResponseItem key={response.verification_id} response={response} />
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-slate-500">
+                <Mail className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                <p>No pending responses</p>
+                <p className="text-sm">All communications have been addressed</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </>
   )
@@ -369,6 +425,74 @@ function NewCocItem({ coc }: { coc: NewCoc }) {
         {statusLabel}
       </Badge>
     </Link>
+  )
+}
+
+function PendingResponseItem({ response }: { response: PendingResponse }) {
+  const urgencyColor = response.days_waiting >= 7
+    ? 'bg-red-100 text-red-700'
+    : response.days_waiting >= 3
+    ? 'bg-amber-100 text-amber-700'
+    : 'bg-slate-100 text-slate-700'
+
+  const handleResend = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    try {
+      const res = await fetch('/api/communications/resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          verificationId: response.verification_id,
+          subcontractorId: response.subcontractor_id,
+          projectId: response.project_id
+        })
+      })
+
+      if (res.ok) {
+        alert('Follow-up notification sent successfully')
+      } else {
+        const data = await res.json()
+        alert(data.error || 'Failed to send notification')
+      }
+    } catch {
+      alert('Failed to send notification')
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-amber-200 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="p-2 bg-amber-100 rounded-lg">
+          <Clock className="h-4 w-4 text-amber-600" />
+        </div>
+        <div>
+          <p className="font-medium text-slate-900">{response.subcontractor_name}</p>
+          <p className="text-sm text-slate-500">{response.project_name}</p>
+          <div className="flex items-center gap-2 mt-1">
+            <Badge variant="outline" className={urgencyColor}>
+              {response.days_waiting} day{response.days_waiting !== 1 ? 's' : ''} waiting
+            </Badge>
+            {response.broker_email && (
+              <span className="text-xs text-slate-400">{response.broker_email}</span>
+            )}
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Link href={`/dashboard/documents/${response.document_id}`}>
+          <Button variant="outline" size="sm">
+            <ExternalLink className="h-4 w-4 mr-1" />
+            View
+          </Button>
+        </Link>
+        <Button variant="default" size="sm" onClick={handleResend}>
+          <RefreshCw className="h-4 w-4 mr-1" />
+          Resend
+        </Button>
+      </div>
+    </div>
   )
 }
 
