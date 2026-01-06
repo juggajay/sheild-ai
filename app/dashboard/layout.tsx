@@ -37,6 +37,9 @@ const ADMIN_ONLY_ROUTES = [
   '/dashboard/admin'
 ]
 
+// Portal-only roles (cannot access main dashboard)
+const PORTAL_ONLY_ROLES = ['subcontractor', 'broker']
+
 // Define role hierarchy for access control
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   admin: ['admin', 'risk_manager', 'project_manager', 'project_administrator', 'read_only'],
@@ -86,6 +89,19 @@ export default function DashboardLayout({
         throw new Error("Not authenticated")
       }
       const data = await response.json()
+
+      // Check if user is a portal-only role (subcontractor/broker)
+      // These users should not access the main dashboard
+      if (PORTAL_ONLY_ROLES.includes(data.user.role)) {
+        toast({
+          title: "Access Denied",
+          description: "Portal users cannot access the main application. Redirecting to portal...",
+          variant: "destructive"
+        })
+        router.push("/portal/dashboard")
+        return
+      }
+
       setUser(data.user)
     } catch (error) {
       router.push("/login")
