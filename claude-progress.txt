@@ -299,3 +299,65 @@ app/api/subcontractors/route.ts - Subcontractors API
 - Exceptions API and UI need to be built
 - Cross-company data isolation is working
 - All role-based access control is implemented
+
+---
+
+## Session 5 Summary (Coding Agent)
+Date: 2026-01-06
+
+### Completed Features
+
+1. **Feature #21: Create company profile** ✅
+   - Company profile page at /dashboard/settings/company
+   - Full CRUD for: name, ABN, ACN, address, logo URL, contact info
+   - Admin-only editing (non-admins see read-only view)
+   - ABN validation (11 digits), ACN validation (9 digits)
+   - Data persists correctly to database
+   - Audit logging for all changes
+
+2. **Feature #22: Company forwarding email generated** ✅
+   - Forwarding email auto-generated during company signup
+   - Format: `coc-{uuid}@riskshield.ai`
+   - Displayed in company settings page
+   - Copy-to-clipboard button
+   - Helper text explaining the feature
+
+3. **Feature #23: Invite new user to company** ✅
+   - User Management page now fetches real users from database (NO MOCK DATA!)
+   - Invite User modal with form (name, email, role)
+   - Sends invitation and creates user with `invitation_status: 'pending'`
+   - Pending invitations displayed in separate section
+   - Invitation email logged to console in dev mode
+   - 7-day expiration on invitation tokens
+
+### Key Files Created/Modified
+
+```
+app/api/company/route.ts - Company profile GET/PUT API
+app/api/users/route.ts - Users list API (admin only)
+app/api/users/invite/route.ts - Updated with invitation_status tracking
+app/dashboard/settings/company/page.tsx - Company profile page
+app/dashboard/settings/users/page.tsx - User management with real data + invite modal
+lib/db/index.ts - Added invitation_status, invitation_token, invitation_expires_at columns
+```
+
+### Database Changes
+- Added `invitation_status` column to users (pending/accepted)
+- Added `invitation_token` column for invitation verification
+- Added `invitation_expires_at` for 7-day expiration
+- Migration code handles existing databases
+
+### Feature Statistics
+- Total Features: 220
+- Passing: 23
+- In Progress: 0
+- Percentage Complete: 10.5%
+
+### Notes for Next Agent
+- Dev server runs on port 3002 (ports 3000-3001 were busy)
+- Next feature to implement: Use `feature_get_next` to get it
+- Company profile, forwarding email, and user invite are fully functional
+- User Management page shows REAL users from database (not mock data)
+- All invitation emails are logged to console in dev mode
+- Test user: test_session4_unique@example.com / TestPass123! (admin)
+- Invited user: invited_test_user@example.com (pending, Risk Manager)
