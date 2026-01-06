@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import Link from "next/link"
 import {
   Building2,
   Plus,
@@ -729,62 +730,64 @@ export default function SubcontractorsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredSubcontractors.map(sub => (
-              <Card key={sub.id} className="hover:shadow-md transition-shadow cursor-pointer">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <CardTitle className="text-lg">{sub.name}</CardTitle>
-                      {sub.trading_name && sub.trading_name !== sub.name && (
-                        <CardDescription>Trading as: {sub.trading_name}</CardDescription>
+              <Link key={sub.id} href={`/dashboard/subcontractors/${sub.id}`}>
+                <Card className="h-full hover:shadow-md hover:border-primary transition-all cursor-pointer">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <CardTitle className="text-lg">{sub.name}</CardTitle>
+                        {sub.trading_name && sub.trading_name !== sub.name && (
+                          <CardDescription>Trading as: {sub.trading_name}</CardDescription>
+                        )}
+                      </div>
+                      {sub.trade && (
+                        <span className="px-2 py-1 text-xs font-medium bg-slate-100 text-slate-700 rounded-full">
+                          {sub.trade}
+                        </span>
                       )}
                     </div>
-                    {sub.trade && (
-                      <span className="px-2 py-1 text-xs font-medium bg-slate-100 text-slate-700 rounded-full">
-                        {sub.trade}
-                      </span>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="text-sm">
+                      <span className="text-slate-500">ABN:</span>
+                      <span className="ml-2 font-mono">{sub.abn}</span>
+                    </div>
+
+                    {sub.contact_name && (
+                      <div className="text-sm flex items-center gap-2">
+                        <Users className="h-4 w-4 text-slate-400" />
+                        <span>{sub.contact_name}</span>
+                      </div>
                     )}
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="text-sm">
-                    <span className="text-slate-500">ABN:</span>
-                    <span className="ml-2 font-mono">{sub.abn}</span>
-                  </div>
 
-                  {sub.contact_name && (
-                    <div className="text-sm flex items-center gap-2">
-                      <Users className="h-4 w-4 text-slate-400" />
-                      <span>{sub.contact_name}</span>
+                    {sub.contact_email && (
+                      <div className="text-sm flex items-center gap-2">
+                        <Mail className="h-4 w-4 text-slate-400" />
+                        <span className="truncate">{sub.contact_email}</span>
+                      </div>
+                    )}
+
+                    {sub.contact_phone && (
+                      <div className="text-sm flex items-center gap-2">
+                        <Phone className="h-4 w-4 text-slate-400" />
+                        <span>{sub.contact_phone}</span>
+                      </div>
+                    )}
+
+                    {sub.address && (
+                      <div className="text-sm flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-slate-400" />
+                        <span className="truncate">{sub.address}</span>
+                      </div>
+                    )}
+
+                    <div className="pt-3 border-t flex items-center justify-between text-sm">
+                      <span className="text-slate-500">Projects</span>
+                      <span className="font-medium">{sub.project_count}</span>
                     </div>
-                  )}
-
-                  {sub.contact_email && (
-                    <div className="text-sm flex items-center gap-2">
-                      <Mail className="h-4 w-4 text-slate-400" />
-                      <span className="truncate">{sub.contact_email}</span>
-                    </div>
-                  )}
-
-                  {sub.contact_phone && (
-                    <div className="text-sm flex items-center gap-2">
-                      <Phone className="h-4 w-4 text-slate-400" />
-                      <span>{sub.contact_phone}</span>
-                    </div>
-                  )}
-
-                  {sub.address && (
-                    <div className="text-sm flex items-center gap-2">
-                      <MapPin className="h-4 w-4 text-slate-400" />
-                      <span className="truncate">{sub.address}</span>
-                    </div>
-                  )}
-
-                  <div className="pt-3 border-t flex items-center justify-between text-sm">
-                    <span className="text-slate-500">Projects</span>
-                    <span className="font-medium">{sub.project_count}</span>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </Link>
             ))}
           </div>
         )}
