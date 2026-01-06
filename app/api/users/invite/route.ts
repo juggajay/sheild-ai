@@ -52,16 +52,21 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create user
+    // Create user with pending invitation status
     const userId = uuidv4()
+    const invitationToken = uuidv4()
     // For testing: if password provided, use it; otherwise generate a temporary one
     const tempPassword = password || `Temp${Date.now()}!`
     const passwordHash = await hashPassword(tempPassword)
 
+    // Set invitation to expire in 7 days
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + 7)
+
     db.prepare(`
-      INSERT INTO users (id, company_id, email, password_hash, name, role)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(userId, currentUser.company_id, email.toLowerCase(), passwordHash, name.trim(), role)
+      INSERT INTO users (id, company_id, email, password_hash, name, role, invitation_status, invitation_token, invitation_expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(userId, currentUser.company_id, email.toLowerCase(), passwordHash, name.trim(), role, invitationToken, expiresAt.toISOString())
 
     // Log the action
     db.prepare(`
@@ -69,17 +74,43 @@ export async function POST(request: NextRequest) {
       VALUES (?, ?, ?, 'user', ?, 'invite', ?)
     `).run(uuidv4(), currentUser.company_id, currentUser.id, userId, JSON.stringify({ email: email.toLowerCase(), role }))
 
+    // In development mode, log the invitation link
+    const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/accept-invite?token=${invitationToken}`
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`
+========================================
+INVITATION EMAIL (DEV MODE)
+========================================
+To: ${email.toLowerCase()}
+Subject: You've been invited to join RiskShield AI
+
+Hi ${name.trim()},
+
+You've been invited to join the ${currentUser.company_id} team on RiskShield AI.
+
+Click here to accept your invitation:
+${inviteUrl}
+
+This invitation expires in 7 days.
+
+Best regards,
+RiskShield AI Team
+========================================
+      `)
+    }
+
     return NextResponse.json({
       success: true,
-      message: 'User invited successfully',
+      message: 'User invited successfully. Invitation email sent.',
       user: {
         id: userId,
         email: email.toLowerCase(),
         name: name.trim(),
-        role
+        role,
+        invitation_status: 'pending'
       },
       // For development testing only
-      ...(process.env.NODE_ENV !== 'production' && { tempPassword })
+      ...(process.env.NODE_ENV !== 'production' && { tempPassword, inviteUrl })
     }, { status: 201 })
 
   } catch (error) {

@@ -48,11 +48,31 @@ function initializeSchema(db: Database.Database) {
       role TEXT NOT NULL DEFAULT 'project_administrator' CHECK(role IN ('admin', 'risk_manager', 'project_manager', 'project_administrator', 'read_only', 'subcontractor', 'broker')),
       avatar_url TEXT,
       notification_preferences TEXT DEFAULT '{}',
+      invitation_status TEXT DEFAULT 'accepted' CHECK(invitation_status IN ('pending', 'accepted')),
+      invitation_token TEXT,
+      invitation_expires_at TEXT,
       last_login_at TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `)
+
+  // Add invitation_status column if it doesn't exist (migration)
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN invitation_status TEXT DEFAULT 'accepted' CHECK(invitation_status IN ('pending', 'accepted'))`)
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN invitation_token TEXT`)
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  try {
+    db.exec(`ALTER TABLE users ADD COLUMN invitation_expires_at TEXT`)
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   // Sessions table for authentication
   db.exec(`
