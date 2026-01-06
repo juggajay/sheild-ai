@@ -788,6 +788,78 @@ RiskShield AI Compliance Team`
           project_name: projectName
         }))
       }
+
+      // Auto-resolve any active exceptions for this project/subcontractor
+      const projectSubcontractor = db.prepare(`
+        SELECT id FROM project_subcontractors
+        WHERE project_id = ? AND subcontractor_id = ?
+      `).get(document.project_id, document.subcontractor_id) as { id: string } | undefined
+
+      if (projectSubcontractor) {
+        // Get the verification ID for the resolution
+        const verificationForResolution = db.prepare('SELECT id FROM verifications WHERE coc_document_id = ?')
+          .get(params.id) as { id: string } | undefined
+
+        // Resolve all active exceptions for this project_subcontractor
+        const activeExceptions = db.prepare(`
+          SELECT id FROM exceptions
+          WHERE project_subcontractor_id = ? AND status = 'active'
+        `).all(projectSubcontractor.id) as { id: string }[]
+
+        for (const exception of activeExceptions) {
+          db.prepare(`
+            UPDATE exceptions
+            SET status = 'resolved',
+                resolution_type = 'coc_updated',
+                resolved_at = datetime('now'),
+                resolution_notes = 'Automatically resolved - new compliant COC uploaded',
+                updated_at = datetime('now')
+            WHERE id = ?
+          `).run(exception.id)
+
+          // Log the resolution
+          db.prepare(`
+            INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
+            VALUES (?, ?, ?, 'exception', ?, 'auto_resolve', ?)
+          `).run(
+            uuidv4(),
+            user.company_id,
+            user.id,
+            exception.id,
+            JSON.stringify({
+              resolution_type: 'coc_updated',
+              verification_id: verificationForResolution?.id,
+              document_id: params.id
+            })
+          )
+        }
+
+        // Update project_subcontractor status to 'compliant'
+        db.prepare(`
+          UPDATE project_subcontractors
+          SET status = 'compliant', updated_at = datetime('now')
+          WHERE id = ?
+        `).run(projectSubcontractor.id)
+
+        // Log the status change
+        if (activeExceptions.length > 0) {
+          db.prepare(`
+            INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
+            VALUES (?, ?, ?, 'project_subcontractor', ?, 'status_change', ?)
+          `).run(
+            uuidv4(),
+            user.company_id,
+            user.id,
+            projectSubcontractor.id,
+            JSON.stringify({
+              previous_status: 'exception',
+              new_status: 'compliant',
+              reason: 'Exceptions auto-resolved after compliant COC upload',
+              exceptions_resolved: activeExceptions.length
+            })
+          )
+        }
+      }
     }
 
     return NextResponse.json({
