@@ -9,7 +9,9 @@ import {
   CheckCircle,
   XCircle,
   Shield,
-  Lock
+  Lock,
+  FileDown,
+  Loader2
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -262,6 +264,39 @@ export default function ExceptionsPage() {
     }
   }
 
+  const handleExportAuditTrail = async (exceptionId: string, issueSummary: string) => {
+    try {
+      const response = await fetch(`/api/exceptions/${exceptionId}/audit-trail`)
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to export audit trail')
+      }
+
+      // Get the blob and create download link
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const safeName = issueSummary.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30)
+      a.download = `Exception_Audit_Trail_${safeName}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      toast({
+        title: "Audit Trail Exported",
+        description: "The exception audit trail has been downloaded"
+      })
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Failed to export audit trail',
+        variant: "destructive"
+      })
+    }
+  }
+
   return (
     <>
       {/* Top Bar */}
@@ -341,6 +376,7 @@ export default function ExceptionsPage() {
                 exception={exception}
                 user={user}
                 onApprovalAction={handleApprovalAction}
+                onExportAuditTrail={handleExportAuditTrail}
               />
             ))}
           </div>
@@ -519,19 +555,31 @@ interface ExceptionCardProps {
   exception: Exception
   user: User | null
   onApprovalAction: (exceptionId: string, action: 'approve' | 'reject') => void
+  onExportAuditTrail: (exceptionId: string, issueSummary: string) => Promise<void>
 }
 
-function ExceptionCard({ exception, user, onApprovalAction }: ExceptionCardProps) {
+function ExceptionCard({ exception, user, onApprovalAction, onExportAuditTrail }: ExceptionCardProps) {
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
   const statusStyle = STATUS_STYLES[exception.status] || STATUS_STYLES.active
   const riskStyle = RISK_STYLES[exception.risk_level] || RISK_STYLES.medium
 
   const canApprove = user && ['admin', 'risk_manager'].includes(user.role) && exception.status === 'pending_approval'
+  const canExport = user && ['admin', 'risk_manager'].includes(user.role)
 
   const handleAction = async (action: 'approve' | 'reject') => {
     setIsProcessing(true)
     await onApprovalAction(exception.id, action)
     setIsProcessing(false)
+  }
+
+  const handleExportAuditTrail = async () => {
+    setIsExporting(true)
+    try {
+      await onExportAuditTrail(exception.id, exception.issue_summary)
+    } finally {
+      setIsExporting(false)
+    }
   }
 
   return (
@@ -585,29 +633,46 @@ function ExceptionCard({ exception, user, onApprovalAction }: ExceptionCardProps
                 </span>
               )}
             </div>
-            {canApprove && (
-              <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
+              {canExport && (
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => handleAction('reject')}
-                  disabled={isProcessing}
-                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  onClick={handleExportAuditTrail}
+                  disabled={isExporting}
                 >
-                  <XCircle className="h-4 w-4 mr-1" />
-                  Reject
+                  {isExporting ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <FileDown className="h-4 w-4 mr-1" />
+                  )}
+                  {isExporting ? 'Exporting...' : 'Export Audit Trail'}
                 </Button>
-                <Button
-                  size="sm"
-                  onClick={() => handleAction('approve')}
-                  disabled={isProcessing}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                >
-                  <CheckCircle className="h-4 w-4 mr-1" />
-                  Approve
-                </Button>
-              </div>
-            )}
+              )}
+              {canApprove && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleAction('reject')}
+                    disabled={isProcessing}
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                  >
+                    <XCircle className="h-4 w-4 mr-1" />
+                    Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => handleAction('approve')}
+                    disabled={isProcessing}
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                  >
+                    <CheckCircle className="h-4 w-4 mr-1" />
+                    Approve
+                  </Button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </CardContent>
