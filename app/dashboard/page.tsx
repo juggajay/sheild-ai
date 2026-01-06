@@ -157,12 +157,13 @@ export default function DashboardPage() {
       <div className="p-6 space-y-6">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            title="Compliance Rate"
-            value={stats?.complianceRate !== null ? `${stats?.complianceRate}%` : "--"}
-            description="Overall portfolio"
-            icon={<CheckCircle className="h-5 w-5 text-green-500" />}
-            trend={stats?.total ? `${stats.compliant + stats.exception} of ${stats.total} compliant` : "No data yet"}
+          <ComplianceGauge
+            percentage={stats?.complianceRate ?? null}
+            compliant={stats?.compliant ?? 0}
+            exception={stats?.exception ?? 0}
+            nonCompliant={stats?.non_compliant ?? 0}
+            pending={stats?.pending ?? 0}
+            total={stats?.total ?? 0}
           />
           <StatCard
             title="Active Projects"
@@ -493,6 +494,134 @@ function PendingResponseItem({ response }: { response: PendingResponse }) {
         </Button>
       </div>
     </div>
+  )
+}
+
+function ComplianceGauge({
+  percentage,
+  compliant,
+  exception,
+  nonCompliant,
+  pending,
+  total
+}: {
+  percentage: number | null
+  compliant: number
+  exception: number
+  nonCompliant: number
+  pending: number
+  total: number
+}) {
+  const [showBreakdown, setShowBreakdown] = useState(false)
+
+  // Calculate gauge properties
+  const displayPercentage = percentage ?? 0
+  const gaugeColor = displayPercentage >= 80
+    ? 'text-green-500'
+    : displayPercentage >= 60
+    ? 'text-amber-500'
+    : 'text-red-500'
+
+  // SVG circle properties
+  const radius = 40
+  const circumference = 2 * Math.PI * radius
+  const strokeDashoffset = circumference - (displayPercentage / 100) * circumference
+
+  return (
+    <Card className="cursor-pointer hover:border-primary transition-colors" onClick={() => setShowBreakdown(!showBreakdown)}>
+      <CardContent className="pt-6">
+        <div className="flex items-center gap-4">
+          {/* Circular Gauge */}
+          <div className="relative">
+            <svg width="100" height="100" className="transform -rotate-90">
+              {/* Background circle */}
+              <circle
+                cx="50"
+                cy="50"
+                r={radius}
+                stroke="currentColor"
+                strokeWidth="8"
+                fill="none"
+                className="text-slate-200"
+              />
+              {/* Progress circle */}
+              <circle
+                cx="50"
+                cy="50"
+                r={radius}
+                stroke="currentColor"
+                strokeWidth="8"
+                fill="none"
+                strokeLinecap="round"
+                className={gaugeColor}
+                style={{
+                  strokeDasharray: circumference,
+                  strokeDashoffset: strokeDashoffset,
+                  transition: 'stroke-dashoffset 0.5s ease-in-out'
+                }}
+              />
+            </svg>
+            {/* Percentage text in center */}
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className={`text-2xl font-bold ${gaugeColor}`}>
+                {percentage !== null ? `${percentage}%` : '--'}
+              </span>
+            </div>
+          </div>
+
+          {/* Text content */}
+          <div className="flex-1">
+            <p className="text-sm font-medium text-slate-500">Compliance Rate</p>
+            <p className="text-sm text-slate-500 mt-1">Overall portfolio</p>
+            <p className="text-xs text-slate-400 mt-1">
+              {total > 0 ? `${compliant + exception} of ${total} compliant` : 'No data yet'}
+            </p>
+            <p className="text-xs text-primary mt-1">Click for breakdown</p>
+          </div>
+        </div>
+
+        {/* Expandable Breakdown */}
+        {showBreakdown && total > 0 && (
+          <div className="mt-4 pt-4 border-t space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-green-500" />
+                <span>Compliant</span>
+              </div>
+              <span className="font-medium">{compliant}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-blue-500" />
+                <span>With Exception</span>
+              </div>
+              <span className="font-medium">{exception}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-red-500" />
+                <span>Non-Compliant</span>
+              </div>
+              <span className="font-medium">{nonCompliant}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-amber-500" />
+                <span>Pending Review</span>
+              </div>
+              <span className="font-medium">{pending}</span>
+            </div>
+            <Link
+              href="/dashboard/subcontractors"
+              className="block text-center text-sm text-primary hover:underline mt-3"
+              onClick={(e) => e.stopPropagation()}
+            >
+              View All Subcontractors →
+            </Link>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
