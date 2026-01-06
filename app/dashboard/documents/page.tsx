@@ -481,12 +481,18 @@ export default function DocumentsPage() {
                   return (
                     <div key={doc.id} className="py-4 flex items-center justify-between">
                       <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center">
+                        <div
+                          className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"
+                          onClick={() => router.push(`/dashboard/documents/${doc.id}`)}
+                        >
                           <FileText className="h-5 w-5 text-slate-500" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-medium text-slate-900">
+                            <span
+                              className="font-medium text-slate-900 hover:text-blue-600 cursor-pointer transition-colors"
+                              onClick={() => router.push(`/dashboard/documents/${doc.id}`)}
+                            >
                               {doc.file_name || 'Untitled Document'}
                             </span>
                             <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${verificationStyle.bg} ${verificationStyle.text}`}>
