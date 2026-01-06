@@ -803,3 +803,62 @@ CREATE TABLE IF NOT EXISTS notifications (
 - Test subcontractor: NOTIFICATION_TEST_SUBBIE (added to REGRESSION_TEST_PROJECT_JAN7)
 - Notification dropdown shows in dashboard header
 - Notifications created automatically when COC uploaded
+
+---
+
+## Session 12 Summary (Coding Agent)
+Date: 2026-01-07
+
+### Completed Features
+
+1. **Feature #99: Tab navigation within detail pages** ✅
+   - Added Exceptions tab to subcontractor detail page (third tab after Insurance and Communications)
+   - Updated subcontractor API to fetch exceptions data
+   - Created Exception interface and styling constants (status, risk level, expiration type)
+   - Tab navigation updates URL correctly:
+     - Default (Insurance): no tab parameter
+     - Communications: ?tab=communications
+     - Exceptions: ?tab=exceptions
+   - URL state is preserved on page reload
+   - Tab content changes correctly when switching tabs
+   - Exception list displays with:
+     - Issue summary as title
+     - Status badge (Active, Pending Approval, Expired, etc.)
+     - Risk level badge (Low, Medium, High)
+     - Reason text
+     - Project name, created by, and date
+   - Exception detail modal shows full information:
+     - Status and risk level
+     - Expiration type (Until Resolved, Fixed Duration, Specific Date, Permanent)
+     - Project name
+     - Full reason text
+     - Created by and approved by with timestamps
+     - Resolution info (if resolved)
+     - Supporting document link (if available)
+   - Verified end-to-end with browser automation
+   - Screenshots captured: tab_navigation_exceptions.png, exception_detail_modal.png
+
+### Key Files Modified
+
+- app/api/subcontractors/[id]/route.ts - Added exceptions query and formatting
+- app/dashboard/subcontractors/[id]/page.tsx - Added Exceptions tab, Exception interface, styling constants, tab button, exception list, and detail modal
+
+### Regression Tests Performed
+
+- Login feature verified working
+- Dashboard loads correctly
+- Subcontractor navigation working
+
+### Feature Statistics
+- Total Features: 221
+- Passing: 94
+- In Progress: 0
+- Percentage Complete: 42.5%
+
+### Notes for Next Agent
+- Dev server runs on port 3001
+- Test user: regression_test_jan7@example.com / TestPass123!
+- Subcontractor detail page now has 3 tabs: Insurance and COCs, Communications, Exceptions
+- Tab state is synced with URL parameters
+- Test subcontractor: NOTIFICATION_TEST_SUBBIE has 1 exception (Missing Professional Indemnity coverage)
+- Use feature_get_next to get the next feature to implement
