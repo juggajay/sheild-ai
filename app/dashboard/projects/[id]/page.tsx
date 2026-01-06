@@ -16,7 +16,10 @@ import {
   Settings,
   Shield,
   Plus,
-  Trash2
+  Trash2,
+  Mail,
+  Copy,
+  Check
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -41,6 +44,7 @@ interface Project {
   start_date: string | null
   end_date: string | null
   estimated_value: number | null
+  forwarding_email: string | null
   project_manager: {
     id: string
     name: string
@@ -94,6 +98,9 @@ export default function ProjectDetailPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
 
+  // Copy email state
+  const [emailCopied, setEmailCopied] = useState(false)
+
   useEffect(() => {
     fetchUserRole()
     fetchProject()
@@ -116,6 +123,26 @@ export default function ProjectDetailPage() {
 
   // Only admins can delete projects
   const canDelete = userRole === 'admin'
+
+  const copyEmailToClipboard = async () => {
+    if (project?.forwarding_email) {
+      try {
+        await navigator.clipboard.writeText(project.forwarding_email)
+        setEmailCopied(true)
+        toast({
+          title: "Copied!",
+          description: "Email address copied to clipboard"
+        })
+        setTimeout(() => setEmailCopied(false), 2000)
+      } catch (err) {
+        toast({
+          title: "Error",
+          description: "Failed to copy email address",
+          variant: "destructive"
+        })
+      }
+    }
+  }
 
   const fetchAvailableSubcontractors = async () => {
     try {
@@ -525,6 +552,43 @@ export default function ProjectDetailPage() {
                 )}
               </CardContent>
             </Card>
+
+            {/* Email Forwarding */}
+            {project.forwarding_email && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Mail className="h-4 w-4 text-primary" />
+                    COC Email Forwarding
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-sm text-slate-500">
+                    Forward Certificates of Currency to this email address for automatic processing:
+                  </p>
+                  <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg border">
+                    <code className="flex-1 text-sm font-mono text-slate-700 break-all">
+                      {project.forwarding_email}
+                    </code>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={copyEmailToClipboard}
+                      className="shrink-0"
+                    >
+                      {emailCopied ? (
+                        <Check className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    This is a unique email for this project. All COCs sent here will be automatically linked to this project.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Insurance Requirements */}
             <Card>

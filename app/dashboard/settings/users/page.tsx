@@ -12,7 +12,8 @@ import {
   Loader2,
   X,
   Send,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -56,11 +57,23 @@ export default function UserManagementPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isInviting, setIsInviting] = useState(false)
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [editingUser, setEditingUser] = useState<User | null>(null)
 
   // Invite form state
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteName, setInviteName] = useState('')
   const [inviteRole, setInviteRole] = useState('project_administrator')
+
+  // Edit form state
+  const [editName, setEditName] = useState('')
+  const [editRole, setEditRole] = useState('')
+
+  // Delete confirmation state
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [userToDelete, setUserToDelete] = useState<User | null>(null)
 
   useEffect(() => {
     fetchUsers()
@@ -156,6 +169,118 @@ export default function UserManagementPage() {
       })
     } finally {
       setIsInviting(false)
+    }
+  }
+
+  const openEditModal = (user: User) => {
+    setEditingUser(user)
+    setEditName(user.name)
+    setEditRole(user.role)
+    setIsEditModalOpen(true)
+  }
+
+  const handleUpdateUser = async () => {
+    if (!editingUser) return
+
+    if (!editName.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Name is required",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsUpdating(true)
+
+    try {
+      const response = await fetch(`/api/users/${editingUser.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: editName,
+          role: editRole
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to update user')
+      }
+
+      toast({
+        title: "Success",
+        description: `User ${editName} updated successfully`
+      })
+
+      // Reset and close modal
+      setEditingUser(null)
+      setEditName('')
+      setEditRole('')
+      setIsEditModalOpen(false)
+
+      // Refresh user list
+      fetchUsers()
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update user'
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive"
+      })
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const openDeleteModal = (user: User) => {
+    setUserToDelete(user)
+    setIsDeleteModalOpen(true)
+    // Close the edit modal if it's open
+    setIsEditModalOpen(false)
+  }
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return
+
+    setIsDeleting(true)
+
+    try {
+      const response = await fetch(`/api/users/${userToDelete.id}`, {
+        method: 'DELETE'
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to delete user')
+      }
+
+      toast({
+        title: "Success",
+        description: `User ${userToDelete.name} has been deactivated`
+      })
+
+      // Reset and close modal
+      setUserToDelete(null)
+      setIsDeleteModalOpen(false)
+
+      // Refresh user list
+      fetchUsers()
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to delete user'
+      toast({
+        title: "Error",
+        description: message,
+        variant: "destructive"
+      })
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -278,7 +403,12 @@ export default function UserManagementPage() {
                           </div>
                         </td>
                         <td className="py-3 px-4 text-right">
-                          <Button variant="ghost" size="sm">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditModal(user)}
+                            title="Edit user"
+                          >
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </td>
@@ -440,6 +570,144 @@ export default function UserManagementPage() {
                   <>
                     <Send className="h-4 w-4 mr-2" />
                     Send Invitation
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Modal */}
+      {isEditModalOpen && editingUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-lg font-semibold text-slate-900">Edit User</h2>
+              <Button variant="ghost" size="sm" onClick={() => setIsEditModalOpen(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="editName">Full Name</Label>
+                <Input
+                  id="editName"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="John Smith"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Email Address</Label>
+                <Input
+                  value={editingUser.email}
+                  disabled
+                  className="bg-slate-50"
+                />
+                <p className="text-xs text-slate-500">Email cannot be changed</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="editRole">Role</Label>
+                <select
+                  id="editRole"
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value)}
+                  className="w-full h-10 px-3 rounded-md border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  {ROLE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {editRole !== editingUser.role && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg">
+                  <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-sm text-amber-700">
+                    Changing role from <strong>{ROLE_LABELS[editingUser.role]?.label}</strong> to <strong>{ROLE_LABELS[editRole]?.label}</strong> will update this user&apos;s permissions immediately.
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between p-4 border-t bg-slate-50">
+              <Button
+                variant="ghost"
+                className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                onClick={() => openDeleteModal(editingUser)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Deactivate User
+              </Button>
+              <div className="flex items-center gap-3">
+                <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleUpdateUser} disabled={isUpdating}>
+                  {isUpdating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save Changes'
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {isDeleteModalOpen && userToDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between p-4 border-b">
+              <h2 className="text-lg font-semibold text-slate-900">Deactivate User</h2>
+              <Button variant="ghost" size="sm" onClick={() => setIsDeleteModalOpen(false)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="flex items-center gap-4 p-4 bg-red-50 rounded-lg">
+                <div className="h-12 w-12 rounded-full bg-red-100 flex items-center justify-center">
+                  <Trash2 className="h-6 w-6 text-red-600" />
+                </div>
+                <div>
+                  <p className="font-medium text-slate-900">{userToDelete.name}</p>
+                  <p className="text-sm text-slate-500">{userToDelete.email}</p>
+                </div>
+              </div>
+              <p className="text-sm text-slate-600">
+                Are you sure you want to deactivate this user? They will no longer be able to log in to the system. This action can be undone by re-inviting them.
+              </p>
+              <div className="flex items-start gap-2 p-3 bg-amber-50 rounded-lg">
+                <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                <p className="text-sm text-amber-700">
+                  This will immediately revoke the user&apos;s access to all projects and data.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-3 p-4 border-t bg-slate-50">
+              <Button variant="outline" onClick={() => setIsDeleteModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={handleDeleteUser}
+                disabled={isDeleting}
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Deactivating...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Deactivate User
                   </>
                 )}
               </Button>
