@@ -98,7 +98,12 @@ export default function DashboardLayout({
           description: "Portal users cannot access the main application. Redirecting to portal...",
           variant: "destructive"
         })
-        router.push("/portal/dashboard")
+        // Redirect to appropriate portal based on role
+        if (data.user.role === 'broker') {
+          router.push("/broker/dashboard")
+        } else {
+          router.push("/portal/dashboard")
+        }
         return
       }
 
