@@ -53,6 +53,15 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
   const fileName = document.file_name || ''
   const isEarlyExpiry = fileName.toLowerCase().includes('expiring_early') ||
                         fileName.toLowerCase().includes('early_expiry')
+  const isNoPrincipalIndemnity = fileName.toLowerCase().includes('no_pi') ||
+                                  fileName.toLowerCase().includes('no_principal')
+  const isNoCrossLiability = fileName.toLowerCase().includes('no_cl') ||
+                             fileName.toLowerCase().includes('no_cross')
+  const isVicWC = fileName.toLowerCase().includes('vic_wc') ||
+                  fileName.toLowerCase().includes('wc_vic')
+  const isLowConfidence = fileName.toLowerCase().includes('poor_quality') ||
+                           fileName.toLowerCase().includes('low_confidence') ||
+                           fileName.toLowerCase().includes('blurry')
 
   // Generate dates - policy typically valid for 1 year
   const now = new Date()
@@ -96,23 +105,23 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
         limit: publicLiabilityLimit,
         limit_type: 'per_occurrence',
         excess: 1000,
-        principal_indemnity: true,
-        cross_liability: true
+        principal_indemnity: !isNoPrincipalIndemnity,
+        cross_liability: !isNoCrossLiability
       },
       {
         type: 'products_liability',
         limit: productsLiabilityLimit,
         limit_type: 'aggregate',
         excess: 1000,
-        principal_indemnity: true,
-        cross_liability: true
+        principal_indemnity: !isNoPrincipalIndemnity,
+        cross_liability: !isNoCrossLiability
       },
       {
         type: 'workers_comp',
         limit: workersCompLimit,
         limit_type: 'statutory',
         excess: 0,
-        state: 'NSW',
+        state: isVicWC ? 'VIC' : 'NSW',
         employer_indemnity: true
       },
       {
@@ -137,7 +146,28 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
     // Extraction metadata
     extraction_timestamp: new Date().toISOString(),
     extraction_model: 'gpt-4-vision-preview',
-    extraction_confidence: 0.85 + Math.random() * 0.14 // 85-99%
+    extraction_confidence: isLowConfidence ? 0.45 + Math.random() * 0.15 : 0.85 + Math.random() * 0.14,
+
+    // Per-field confidence scores for granular confidence display
+    // Low confidence scenarios (poor quality documents) have lower per-field scores
+    field_confidences: {
+      insured_party_name: isLowConfidence ? 0.50 + Math.random() * 0.20 : 0.90 + Math.random() * 0.09,
+      insured_party_abn: isLowConfidence ? 0.40 + Math.random() * 0.25 : 0.92 + Math.random() * 0.07,
+      insured_party_address: isLowConfidence ? 0.35 + Math.random() * 0.30 : 0.85 + Math.random() * 0.10,
+      insurer_name: isLowConfidence ? 0.55 + Math.random() * 0.20 : 0.95 + Math.random() * 0.04,
+      insurer_abn: isLowConfidence ? 0.45 + Math.random() * 0.20 : 0.93 + Math.random() * 0.06,
+      policy_number: isLowConfidence ? 0.35 + Math.random() * 0.30 : 0.88 + Math.random() * 0.10,
+      period_of_insurance_start: isLowConfidence ? 0.50 + Math.random() * 0.25 : 0.90 + Math.random() * 0.09,
+      period_of_insurance_end: isLowConfidence ? 0.50 + Math.random() * 0.25 : 0.90 + Math.random() * 0.09,
+      public_liability_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.88 + Math.random() * 0.11,
+      products_liability_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.88 + Math.random() * 0.11,
+      workers_comp_limit: isLowConfidence ? 0.40 + Math.random() * 0.30 : 0.85 + Math.random() * 0.12,
+      professional_indemnity_limit: isLowConfidence ? 0.40 + Math.random() * 0.30 : 0.85 + Math.random() * 0.12,
+      broker_name: isLowConfidence ? 0.30 + Math.random() * 0.35 : 0.80 + Math.random() * 0.15,
+      broker_contact: isLowConfidence ? 0.25 + Math.random() * 0.35 : 0.75 + Math.random() * 0.18,
+      broker_phone: isLowConfidence ? 0.30 + Math.random() * 0.35 : 0.78 + Math.random() * 0.17,
+      broker_email: isLowConfidence ? 0.35 + Math.random() * 0.35 : 0.82 + Math.random() * 0.15
+    }
   }
 
   return extractedData
@@ -147,7 +177,8 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
 function verifyAgainstRequirements(
   extractedData: ReturnType<typeof extractPolicyDetails>,
   requirements: InsuranceRequirement[],
-  projectEndDate?: string | null
+  projectEndDate?: string | null,
+  projectState?: string | null
 ) {
   const checks: Array<{
     check_type: string
@@ -329,6 +360,33 @@ function verifyAgainstRequirements(
         actual_value: 'No'
       })
     }
+
+    // Check Workers Comp state matches project state
+    if (requirement.coverage_type === 'workers_comp' && projectState && 'state' in coverage) {
+      const wcState = (coverage as { state?: string }).state
+      if (wcState && wcState !== projectState) {
+        checks.push({
+          check_type: 'workers_comp_state',
+          description: "Workers' Compensation state coverage",
+          status: 'fail',
+          details: `WC scheme is for ${wcState} but project is in ${projectState}`
+        })
+        deficiencies.push({
+          type: 'state_mismatch',
+          severity: 'critical',
+          description: `Workers' Compensation scheme does not cover project state`,
+          required_value: `${projectState} scheme`,
+          actual_value: `${wcState} scheme`
+        })
+      } else if (wcState && wcState === projectState) {
+        checks.push({
+          check_type: 'workers_comp_state',
+          description: "Workers' Compensation state coverage",
+          status: 'pass',
+          details: `WC scheme (${wcState}) matches project state`
+        })
+      }
+    }
   }
 
   // Calculate overall status
@@ -409,10 +467,11 @@ export async function POST(
       SELECT * FROM insurance_requirements WHERE project_id = ?
     `).all(document.project_id) as InsuranceRequirement[]
 
-    // Get project end date for policy coverage check
-    const project = db.prepare('SELECT end_date FROM projects WHERE id = ?')
-      .get(document.project_id) as { end_date: string | null } | undefined
+    // Get project end date and state for coverage checks
+    const project = db.prepare('SELECT end_date, state FROM projects WHERE id = ?')
+      .get(document.project_id) as { end_date: string | null; state: string | null } | undefined
     const projectEndDate = project?.end_date || null
+    const projectState = project?.state || null
 
     // Update processing status
     db.prepare(`
@@ -424,8 +483,8 @@ export async function POST(
     // Extract policy details using AI (simulated)
     const extractedData = extractPolicyDetails(document, subcontractor)
 
-    // Verify against requirements (including project end date check)
-    const verification = verifyAgainstRequirements(extractedData, requirements, projectEndDate)
+    // Verify against requirements (including project end date and state checks)
+    const verification = verifyAgainstRequirements(extractedData, requirements, projectEndDate, projectState)
 
     // Update or create verification record
     if (document.verification_id) {

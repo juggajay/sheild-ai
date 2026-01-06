@@ -17,8 +17,29 @@ import {
   Clock,
   Download,
   RefreshCw,
-  ExternalLink
+  ExternalLink,
+  ThumbsUp,
+  ThumbsDown
 } from 'lucide-react'
+
+interface FieldConfidences {
+  insured_party_name: number
+  insured_party_abn: number
+  insured_party_address: number
+  insurer_name: number
+  insurer_abn: number
+  policy_number: number
+  period_of_insurance_start: number
+  period_of_insurance_end: number
+  public_liability_limit: number
+  products_liability_limit: number
+  workers_comp_limit: number
+  professional_indemnity_limit: number
+  broker_name?: number
+  broker_contact?: number
+  broker_phone?: number
+  broker_email?: number
+}
 
 interface ExtractedData {
   insured_party_name: string
@@ -49,6 +70,7 @@ interface ExtractedData {
   extraction_timestamp: string
   extraction_model: string
   extraction_confidence: number
+  field_confidences?: FieldConfidences
 }
 
 interface Check {
@@ -93,6 +115,7 @@ export default function DocumentDetailPage() {
   const [document, setDocument] = useState<DocumentData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isVerifying, setIsVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -135,6 +158,31 @@ export default function DocumentDetailPage() {
       setError('Failed to reprocess document')
     } finally {
       setIsProcessing(false)
+    }
+  }
+
+  async function handleManualVerification(action: 'approve' | 'reject') {
+    if (!document) return
+
+    setIsVerifying(true)
+    try {
+      const res = await fetch(`/api/documents/${documentId}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || `Failed to ${action} document`)
+      }
+
+      // Refresh document data
+      await fetchDocument()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Failed to ${action} document`)
+    } finally {
+      setIsVerifying(false)
     }
   }
 
@@ -207,6 +255,77 @@ export default function DocumentDetailPage() {
       case 'minor':
         return <span className="px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">Minor</span>
     }
+  }
+
+  // Low confidence threshold (below this value, fields are highlighted)
+  const LOW_CONFIDENCE_THRESHOLD = 0.70
+
+  function getConfidenceColor(confidence: number): string {
+    if (confidence >= 0.90) return 'text-green-600'
+    if (confidence >= 0.70) return 'text-amber-600'
+    return 'text-red-600'
+  }
+
+  function getConfidenceBgColor(confidence: number): string {
+    if (confidence >= 0.90) return 'bg-green-50'
+    if (confidence >= 0.70) return 'bg-amber-50'
+    return 'bg-red-50 border border-red-200'
+  }
+
+  function getConfidenceBarColor(confidence: number): string {
+    if (confidence >= 0.90) return 'bg-green-500'
+    if (confidence >= 0.70) return 'bg-amber-500'
+    return 'bg-red-500'
+  }
+
+  function ConfidenceIndicator({ confidence, showLabel = true }: { confidence: number; showLabel?: boolean }) {
+    const percentage = Math.round(confidence * 100)
+    const isLow = confidence < LOW_CONFIDENCE_THRESHOLD
+    return (
+      <div className="flex items-center gap-1.5">
+        {showLabel && (
+          <span className={`text-xs font-medium ${getConfidenceColor(confidence)}`}>
+            {percentage}%
+          </span>
+        )}
+        <div className="w-12 bg-gray-200 rounded-full h-1.5">
+          <div
+            className={`h-1.5 rounded-full ${getConfidenceBarColor(confidence)}`}
+            style={{ width: `${percentage}%` }}
+          />
+        </div>
+        {isLow && (
+          <AlertTriangle className="w-3 h-3 text-red-500" />
+        )}
+      </div>
+    )
+  }
+
+  function FieldWithConfidence({
+    label,
+    value,
+    confidence,
+    mono = false
+  }: {
+    label: string
+    value: string
+    confidence?: number
+    mono?: boolean
+  }) {
+    const isLow = confidence !== undefined && confidence < LOW_CONFIDENCE_THRESHOLD
+    return (
+      <div className={`flex justify-between items-start py-1.5 ${isLow ? getConfidenceBgColor(confidence) + ' px-2 rounded -mx-2' : ''}`}>
+        <div className="flex flex-col">
+          <span className="text-gray-600">{label}</span>
+          {confidence !== undefined && (
+            <ConfidenceIndicator confidence={confidence} />
+          )}
+        </div>
+        <span className={`font-medium text-right max-w-[60%] ${mono ? 'font-mono' : ''} ${isLow ? 'text-red-700' : ''}`}>
+          {value}
+        </span>
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -336,18 +455,22 @@ export default function DocumentDetailPage() {
                   Insured Party
                 </h3>
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Name</span>
-                    <span className="font-medium">{extractedData.insured_party_name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">ABN</span>
-                    <span className="font-medium">{extractedData.insured_party_abn}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Address</span>
-                    <span className="font-medium">{extractedData.insured_party_address}</span>
-                  </div>
+                  <FieldWithConfidence
+                    label="Name"
+                    value={extractedData.insured_party_name}
+                    confidence={extractedData.field_confidences?.insured_party_name}
+                  />
+                  <FieldWithConfidence
+                    label="ABN"
+                    value={extractedData.insured_party_abn}
+                    confidence={extractedData.field_confidences?.insured_party_abn}
+                    mono
+                  />
+                  <FieldWithConfidence
+                    label="Address"
+                    value={extractedData.insured_party_address}
+                    confidence={extractedData.field_confidences?.insured_party_address}
+                  />
                 </div>
               </div>
 
@@ -358,14 +481,17 @@ export default function DocumentDetailPage() {
                   Insurer
                 </h3>
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Name</span>
-                    <span className="font-medium">{extractedData.insurer_name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">ABN</span>
-                    <span className="font-medium">{extractedData.insurer_abn}</span>
-                  </div>
+                  <FieldWithConfidence
+                    label="Name"
+                    value={extractedData.insurer_name}
+                    confidence={extractedData.field_confidences?.insurer_name}
+                  />
+                  <FieldWithConfidence
+                    label="ABN"
+                    value={extractedData.insurer_abn}
+                    confidence={extractedData.field_confidences?.insurer_abn}
+                    mono
+                  />
                 </div>
               </div>
 
@@ -376,16 +502,22 @@ export default function DocumentDetailPage() {
                   Policy Details
                 </h3>
                 <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Policy Number</span>
-                    <span className="font-medium font-mono">{extractedData.policy_number}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Period of Insurance</span>
-                    <span className="font-medium">
-                      {formatDate(extractedData.period_of_insurance_start)} - {formatDate(extractedData.period_of_insurance_end)}
-                    </span>
-                  </div>
+                  <FieldWithConfidence
+                    label="Policy Number"
+                    value={extractedData.policy_number}
+                    confidence={extractedData.field_confidences?.policy_number}
+                    mono
+                  />
+                  <FieldWithConfidence
+                    label="Start Date"
+                    value={formatDate(extractedData.period_of_insurance_start)}
+                    confidence={extractedData.field_confidences?.period_of_insurance_start}
+                  />
+                  <FieldWithConfidence
+                    label="End Date"
+                    value={formatDate(extractedData.period_of_insurance_end)}
+                    confidence={extractedData.field_confidences?.period_of_insurance_end}
+                  />
                   <div className="flex justify-between">
                     <span className="text-gray-600">Currency</span>
                     <span className="font-medium">{extractedData.currency}</span>
@@ -404,46 +536,61 @@ export default function DocumentDetailPage() {
                   Coverage Details
                 </h3>
                 <div className="space-y-3">
-                  {extractedData.coverages.map((coverage, index) => (
-                    <div key={index} className="bg-gray-50 rounded-lg p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="font-medium text-gray-900">
-                          {formatCoverageType(coverage.type)}
-                        </span>
-                        <span className="text-lg font-semibold text-blue-600">
-                          {formatCurrency(coverage.limit)}
-                        </span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Limit Type</span>
-                          <span className="capitalize">{coverage.limit_type.replace(/_/g, ' ')}</span>
+                  {extractedData.coverages.map((coverage, index) => {
+                    // Get confidence for this coverage type
+                    const confidenceKey = `${coverage.type}_limit` as keyof FieldConfidences
+                    const coverageConfidence = extractedData.field_confidences?.[confidenceKey]
+                    const isLowConfidence = coverageConfidence !== undefined && coverageConfidence < LOW_CONFIDENCE_THRESHOLD
+
+                    return (
+                      <div
+                        key={index}
+                        className={`rounded-lg p-4 ${isLowConfidence ? 'bg-red-50 border border-red-200' : 'bg-gray-50'}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className={`font-medium ${isLowConfidence ? 'text-red-900' : 'text-gray-900'}`}>
+                              {formatCoverageType(coverage.type)}
+                            </span>
+                            {coverageConfidence !== undefined && (
+                              <ConfidenceIndicator confidence={coverageConfidence} />
+                            )}
+                          </div>
+                          <span className={`text-lg font-semibold ${isLowConfidence ? 'text-red-700' : 'text-blue-600'}`}>
+                            {formatCurrency(coverage.limit)}
+                          </span>
                         </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">Excess</span>
-                          <span>{formatCurrency(coverage.excess)}</span>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Limit Type</span>
+                            <span className="capitalize">{coverage.limit_type.replace(/_/g, ' ')}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Excess</span>
+                            <span>{formatCurrency(coverage.excess)}</span>
+                          </div>
+                          {coverage.principal_indemnity !== undefined && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Principal Indemnity</span>
+                              <span>{coverage.principal_indemnity ? 'Yes' : 'No'}</span>
+                            </div>
+                          )}
+                          {coverage.cross_liability !== undefined && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Cross Liability</span>
+                              <span>{coverage.cross_liability ? 'Yes' : 'No'}</span>
+                            </div>
+                          )}
+                          {coverage.state && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">State</span>
+                              <span>{coverage.state}</span>
+                            </div>
+                          )}
                         </div>
-                        {coverage.principal_indemnity !== undefined && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Principal Indemnity</span>
-                            <span>{coverage.principal_indemnity ? 'Yes' : 'No'}</span>
-                          </div>
-                        )}
-                        {coverage.cross_liability !== undefined && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Cross Liability</span>
-                            <span>{coverage.cross_liability ? 'Yes' : 'No'}</span>
-                          </div>
-                        )}
-                        {coverage.state && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">State</span>
-                            <span>{coverage.state}</span>
-                          </div>
-                        )}
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
 
@@ -455,27 +602,31 @@ export default function DocumentDetailPage() {
                     Broker Details
                   </h3>
                   <div className="bg-gray-50 rounded-lg p-4 space-y-2">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Company</span>
-                      <span className="font-medium">{extractedData.broker_name}</span>
-                    </div>
+                    <FieldWithConfidence
+                      label="Company"
+                      value={extractedData.broker_name}
+                      confidence={extractedData.field_confidences?.broker_name}
+                    />
                     {extractedData.broker_contact && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Contact</span>
-                        <span className="font-medium">{extractedData.broker_contact}</span>
-                      </div>
+                      <FieldWithConfidence
+                        label="Contact"
+                        value={extractedData.broker_contact}
+                        confidence={extractedData.field_confidences?.broker_contact}
+                      />
                     )}
                     {extractedData.broker_email && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Email</span>
-                        <span className="font-medium">{extractedData.broker_email}</span>
-                      </div>
+                      <FieldWithConfidence
+                        label="Email"
+                        value={extractedData.broker_email}
+                        confidence={extractedData.field_confidences?.broker_email}
+                      />
                     )}
                     {extractedData.broker_phone && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Phone</span>
-                        <span className="font-medium">{extractedData.broker_phone}</span>
-                      </div>
+                      <FieldWithConfidence
+                        label="Phone"
+                        value={extractedData.broker_phone}
+                        confidence={extractedData.field_confidences?.broker_phone}
+                      />
                     )}
                   </div>
                 </div>
@@ -524,6 +675,34 @@ export default function DocumentDetailPage() {
                 <span className="font-medium text-red-600">{deficiencies.length}</span>
               </div>
             </div>
+
+            {/* Manual Verification Actions - Show only for review status */}
+            {document.verification_status === 'review' && (
+              <div className="mt-6 pt-4 border-t border-gray-200">
+                <h3 className="text-sm font-medium text-gray-700 mb-3">Manual Review Required</h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  This document requires manual review. Please verify the extracted data and approve or reject.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => handleManualVerification('approve')}
+                    disabled={isVerifying}
+                    className="flex-1 inline-flex items-center justify-center px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ThumbsUp className="w-4 h-4 mr-2" />
+                    {isVerifying ? 'Processing...' : 'Approve'}
+                  </button>
+                  <button
+                    onClick={() => handleManualVerification('reject')}
+                    disabled={isVerifying}
+                    className="flex-1 inline-flex items-center justify-center px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <ThumbsDown className="w-4 h-4 mr-2" />
+                    {isVerifying ? 'Processing...' : 'Reject'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Verification Checks */}

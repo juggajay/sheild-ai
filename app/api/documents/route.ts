@@ -64,6 +64,14 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
   const isUnlicensedInsurer = fileName?.toLowerCase().includes('unlicensed') ||
                               fileName?.toLowerCase().includes('offshore') ||
                               fileName?.toLowerCase().includes('unregistered')
+  // Test scenario for full compliance - all limits at maximum, all requirements met
+  const isFullCompliance = fileName?.toLowerCase().includes('full_compliance') ||
+                           fileName?.toLowerCase().includes('all_pass') ||
+                           fileName?.toLowerCase().includes('compliant_test')
+  // Test scenario for low confidence - poor quality scan triggering manual review
+  const isLowConfidence = fileName?.toLowerCase().includes('poor_quality') ||
+                          fileName?.toLowerCase().includes('low_confidence') ||
+                          fileName?.toLowerCase().includes('blurry')
 
   const insurers = APRA_LICENSED_INSURERS.slice(0, 8) // Use first 8 APRA-licensed insurers for normal extraction
 
@@ -86,10 +94,11 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
     endDate.setFullYear(endDate.getFullYear() + 1)
   }
 
-  const publicLiabilityLimit = [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
-  const productsLiabilityLimit = [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
-  const workersCompLimit = [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
-  const professionalIndemnityLimit = [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
+  // Use maximum limits for full compliance test scenario
+  const publicLiabilityLimit = isFullCompliance ? 20000000 : [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
+  const productsLiabilityLimit = isFullCompliance ? 20000000 : [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
+  const workersCompLimit = isFullCompliance ? 5000000 : [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
+  const professionalIndemnityLimit = isFullCompliance ? 5000000 : [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
 
   // Use a different ABN for testing ABN mismatch scenarios
   const extractedAbn = isWrongAbn ? '99999999999' : subcontractor.abn
@@ -149,7 +158,27 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
     territory: 'Australia and New Zealand',
     extraction_timestamp: new Date().toISOString(),
     extraction_model: 'gpt-4-vision-preview',
-    extraction_confidence: 0.85 + Math.random() * 0.14
+    // Low confidence for poor quality scans, normal confidence otherwise
+    extraction_confidence: isLowConfidence ? 0.45 + Math.random() * 0.15 : 0.85 + Math.random() * 0.14,
+    // Per-field confidence scores for granular confidence display
+    field_confidences: {
+      insured_party_name: isLowConfidence ? 0.50 + Math.random() * 0.20 : 0.90 + Math.random() * 0.09,
+      insured_party_abn: isLowConfidence ? 0.40 + Math.random() * 0.25 : 0.92 + Math.random() * 0.07,
+      insured_party_address: isLowConfidence ? 0.35 + Math.random() * 0.30 : 0.85 + Math.random() * 0.10,
+      insurer_name: isLowConfidence ? 0.55 + Math.random() * 0.20 : 0.95 + Math.random() * 0.04,
+      insurer_abn: isLowConfidence ? 0.45 + Math.random() * 0.20 : 0.93 + Math.random() * 0.06,
+      policy_number: isLowConfidence ? 0.35 + Math.random() * 0.30 : 0.88 + Math.random() * 0.10,
+      period_of_insurance_start: isLowConfidence ? 0.50 + Math.random() * 0.25 : 0.90 + Math.random() * 0.09,
+      period_of_insurance_end: isLowConfidence ? 0.50 + Math.random() * 0.25 : 0.90 + Math.random() * 0.09,
+      public_liability_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.88 + Math.random() * 0.11,
+      products_liability_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.88 + Math.random() * 0.11,
+      workers_comp_limit: isLowConfidence ? 0.40 + Math.random() * 0.30 : 0.85 + Math.random() * 0.12,
+      professional_indemnity_limit: isLowConfidence ? 0.40 + Math.random() * 0.30 : 0.85 + Math.random() * 0.12,
+      broker_name: isLowConfidence ? 0.30 + Math.random() * 0.35 : 0.80 + Math.random() * 0.15,
+      broker_contact: isLowConfidence ? 0.25 + Math.random() * 0.35 : 0.75 + Math.random() * 0.18,
+      broker_phone: isLowConfidence ? 0.30 + Math.random() * 0.35 : 0.78 + Math.random() * 0.17,
+      broker_email: isLowConfidence ? 0.35 + Math.random() * 0.35 : 0.82 + Math.random() * 0.15
+    }
   }
 }
 
@@ -443,12 +472,23 @@ function verifyAgainstRequirements(
   const hasFailures = checks.some(c => c.status === 'fail')
   const hasWarnings = checks.some(c => c.status === 'warning')
   const hasCriticalDeficiencies = deficiencies.some(d => d.severity === 'critical')
+  const confidenceScore = extractedData.extraction_confidence
+  const LOW_CONFIDENCE_THRESHOLD = 0.70 // Below 70% confidence requires manual review
 
   let overallStatus: 'pass' | 'fail' | 'review' = 'pass'
   if (hasFailures || hasCriticalDeficiencies) {
     overallStatus = 'fail'
-  } else if (hasWarnings) {
+  } else if (hasWarnings || confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
+    // Low confidence extractions need manual review even if all checks pass
     overallStatus = 'review'
+    if (confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
+      checks.push({
+        check_type: 'confidence_check',
+        description: 'AI extraction confidence',
+        status: 'warning',
+        details: `Low confidence score (${(confidenceScore * 100).toFixed(0)}%) - manual review recommended`
+      })
+    }
   }
 
   return {
@@ -699,6 +739,33 @@ export async function POST(request: NextRequest) {
       UPDATE coc_documents SET processing_status = 'completed', updated_at = datetime('now')
       WHERE id = ?
     `).run(documentId)
+
+    // Auto-approve: If verification passes, automatically update subcontractor compliance status to 'compliant'
+    if (verification.status === 'pass') {
+      db.prepare(`
+        UPDATE project_subcontractors
+        SET status = 'compliant', updated_at = datetime('now')
+        WHERE project_id = ? AND subcontractor_id = ?
+      `).run(projectId, subcontractorId)
+
+      // Log the auto-approval
+      db.prepare(`
+        INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
+        VALUES (?, ?, ?, 'project_subcontractor', ?, 'auto_approve', ?)
+      `).run(uuidv4(), user.company_id, user.id, `${projectId}_${subcontractorId}`, JSON.stringify({
+        documentId,
+        verificationStatus: 'pass',
+        autoApproved: true,
+        message: 'Subcontractor automatically marked compliant after verification passed'
+      }))
+    } else if (verification.status === 'fail') {
+      // If verification fails, mark subcontractor as non-compliant
+      db.prepare(`
+        UPDATE project_subcontractors
+        SET status = 'non_compliant', updated_at = datetime('now')
+        WHERE project_id = ? AND subcontractor_id = ?
+      `).run(projectId, subcontractorId)
+    }
 
     return NextResponse.json({
       success: true,
