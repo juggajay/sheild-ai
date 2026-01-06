@@ -35,6 +35,14 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
   // Check for test scenarios based on filename
   const isEarlyExpiry = fileName?.toLowerCase().includes('expiring_early') ||
                         fileName?.toLowerCase().includes('early_expiry')
+  const isNoPrincipalIndemnity = fileName?.toLowerCase().includes('no_pi') ||
+                                  fileName?.toLowerCase().includes('no_principal')
+  const isNoCrossLiability = fileName?.toLowerCase().includes('no_cl') ||
+                             fileName?.toLowerCase().includes('no_cross')
+  const isVicWC = fileName?.toLowerCase().includes('vic_wc') ||
+                  fileName?.toLowerCase().includes('wc_vic')
+  const isWrongAbn = fileName?.toLowerCase().includes('wrong_abn') ||
+                     fileName?.toLowerCase().includes('abn_mismatch')
 
   const now = new Date()
   const startDate = new Date(now)
@@ -54,9 +62,12 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
   const workersCompLimit = [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
   const professionalIndemnityLimit = [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
 
+  // Use a different ABN for testing ABN mismatch scenarios
+  const extractedAbn = isWrongAbn ? '99999999999' : subcontractor.abn
+
   return {
     insured_party_name: subcontractor.name,
-    insured_party_abn: subcontractor.abn,
+    insured_party_abn: extractedAbn,
     insured_party_address: '123 Construction Way, Sydney NSW 2000',
     insurer_name: randomInsurer,
     insurer_abn: '28008770864',
@@ -69,23 +80,23 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
         limit: publicLiabilityLimit,
         limit_type: 'per_occurrence',
         excess: 1000,
-        principal_indemnity: true,
-        cross_liability: true
+        principal_indemnity: !isNoPrincipalIndemnity,
+        cross_liability: !isNoCrossLiability
       },
       {
         type: 'products_liability',
         limit: productsLiabilityLimit,
         limit_type: 'aggregate',
         excess: 1000,
-        principal_indemnity: true,
-        cross_liability: true
+        principal_indemnity: !isNoPrincipalIndemnity,
+        cross_liability: !isNoCrossLiability
       },
       {
         type: 'workers_comp',
         limit: workersCompLimit,
         limit_type: 'statutory',
         excess: 0,
-        state: 'NSW',
+        state: isVicWC ? 'VIC' : 'NSW',
         employer_indemnity: true
       },
       {
@@ -123,7 +134,9 @@ function formatCoverageType(type: string): string {
 function verifyAgainstRequirements(
   extractedData: ReturnType<typeof performAIExtraction>,
   requirements: InsuranceRequirement[],
-  projectEndDate?: string | null
+  projectEndDate?: string | null,
+  projectState?: string | null,
+  subcontractorAbn?: string | null
 ) {
   const checks: Array<{
     check_type: string
@@ -203,12 +216,41 @@ function verifyAgainstRequirements(
   }
 
   // Check ABN matches
-  checks.push({
-    check_type: 'abn_verification',
-    description: 'ABN verification',
-    status: 'pass',
-    details: `ABN ${extractedData.insured_party_abn} verified`
-  })
+  if (subcontractorAbn) {
+    // Normalize ABNs for comparison (remove spaces)
+    const extractedAbn = extractedData.insured_party_abn?.replace(/\s/g, '') || ''
+    const expectedAbn = subcontractorAbn.replace(/\s/g, '')
+
+    if (extractedAbn !== expectedAbn) {
+      checks.push({
+        check_type: 'abn_verification',
+        description: 'ABN verification',
+        status: 'fail',
+        details: `ABN ${extractedAbn} does not match subcontractor ABN ${expectedAbn}`
+      })
+      deficiencies.push({
+        type: 'abn_mismatch',
+        severity: 'critical',
+        description: 'Certificate ABN does not match subcontractor ABN',
+        required_value: expectedAbn,
+        actual_value: extractedAbn
+      })
+    } else {
+      checks.push({
+        check_type: 'abn_verification',
+        description: 'ABN verification',
+        status: 'pass',
+        details: `ABN ${extractedAbn} matches subcontractor record`
+      })
+    }
+  } else {
+    checks.push({
+      check_type: 'abn_verification',
+      description: 'ABN verification',
+      status: 'pass',
+      details: `ABN ${extractedData.insured_party_abn} verified`
+    })
+  }
 
   // Check each coverage type against requirements
   for (const requirement of requirements) {
@@ -270,6 +312,67 @@ function verifyAgainstRequirements(
         required_value: `Max $${requirement.maximum_excess.toLocaleString()}`,
         actual_value: `$${coverage.excess.toLocaleString()}`
       })
+    }
+
+    // Check principal indemnity
+    if (requirement.principal_indemnity_required && 'principal_indemnity' in coverage && !coverage.principal_indemnity) {
+      checks.push({
+        check_type: `principal_indemnity_${requirement.coverage_type}`,
+        description: `${formatCoverageType(requirement.coverage_type)} principal indemnity`,
+        status: 'fail',
+        details: 'Principal indemnity extension required but not present'
+      })
+      deficiencies.push({
+        type: 'missing_endorsement',
+        severity: 'major',
+        description: `Principal indemnity extension required for ${formatCoverageType(requirement.coverage_type)}`,
+        required_value: 'Yes',
+        actual_value: 'No'
+      })
+    }
+
+    // Check cross liability
+    if (requirement.cross_liability_required && 'cross_liability' in coverage && !coverage.cross_liability) {
+      checks.push({
+        check_type: `cross_liability_${requirement.coverage_type}`,
+        description: `${formatCoverageType(requirement.coverage_type)} cross liability`,
+        status: 'fail',
+        details: 'Cross liability extension required but not present'
+      })
+      deficiencies.push({
+        type: 'missing_endorsement',
+        severity: 'major',
+        description: `Cross liability extension required for ${formatCoverageType(requirement.coverage_type)}`,
+        required_value: 'Yes',
+        actual_value: 'No'
+      })
+    }
+
+    // Check Workers Comp state matches project state
+    if (requirement.coverage_type === 'workers_comp' && projectState && 'state' in coverage) {
+      const wcState = (coverage as { state?: string }).state
+      if (wcState && wcState !== projectState) {
+        checks.push({
+          check_type: 'workers_comp_state',
+          description: "Workers' Compensation state coverage",
+          status: 'fail',
+          details: `WC scheme is for ${wcState} but project is in ${projectState}`
+        })
+        deficiencies.push({
+          type: 'state_mismatch',
+          severity: 'critical',
+          description: `Workers' Compensation scheme does not cover project state`,
+          required_value: `${projectState} scheme`,
+          actual_value: `${wcState} scheme`
+        })
+      } else if (wcState && wcState === projectState) {
+        checks.push({
+          check_type: 'workers_comp_state',
+          description: "Workers' Compensation state coverage",
+          status: 'pass',
+          details: `WC scheme (${wcState}) matches project state`
+        })
+      }
     }
   }
 
@@ -501,10 +604,12 @@ export async function POST(request: NextRequest) {
       SELECT * FROM insurance_requirements WHERE project_id = ?
     `).all(projectId) as InsuranceRequirement[]
 
-    // Get project end date for coverage check
+    // Get project end date and state for coverage checks
     const projectEndDate = project.end_date
+    const projectState = project.state
 
-    const verification = verifyAgainstRequirements(extractedData, requirements, projectEndDate)
+    const subcontractorAbn = (subcontractor as { abn: string }).abn
+    const verification = verifyAgainstRequirements(extractedData, requirements, projectEndDate, projectState, subcontractorAbn)
 
     // Update verification record with extracted data
     db.prepare(`
