@@ -58,40 +58,76 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { name, abn, contactName, contactEmail, contactPhone, trade } = body
+    const {
+      name,
+      abn,
+      tradingName,
+      trade,
+      address,
+      contactName,
+      contactEmail,
+      contactPhone,
+      brokerName,
+      brokerEmail,
+      brokerPhone
+    } = body
 
     // Validate required fields
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Subcontractor name is required' }, { status: 400 })
     }
 
+    if (!abn?.trim()) {
+      return NextResponse.json({ error: 'ABN is required' }, { status: 400 })
+    }
+
+    // Validate ABN format (11 digits)
+    const cleanedABN = abn.replace(/\s/g, '')
+    if (!/^\d{11}$/.test(cleanedABN)) {
+      return NextResponse.json({ error: 'ABN must be exactly 11 digits' }, { status: 400 })
+    }
+
+    // Validate ABN using Australian checksum algorithm
+    const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
+    const digits = cleanedABN.split('').map(Number)
+    digits[0] = digits[0] - 1 // Subtract 1 from first digit
+    const sum = digits.reduce((acc, digit, i) => acc + digit * weights[i], 0)
+    if (sum % 89 !== 0) {
+      return NextResponse.json({ error: 'Invalid ABN checksum - please verify the ABN is correct' }, { status: 400 })
+    }
+
     const db = getDb()
 
     // Check if ABN already exists for this company
-    if (abn) {
-      const cleanedABN = abn.replace(/\s/g, '')
-      const existingSub = db.prepare('SELECT id FROM subcontractors WHERE company_id = ? AND abn = ?').get(user.company_id, cleanedABN)
-      if (existingSub) {
-        return NextResponse.json({ error: 'A subcontractor with this ABN already exists' }, { status: 409 })
-      }
+    const existingSub = db.prepare('SELECT id FROM subcontractors WHERE company_id = ? AND abn = ?').get(user.company_id, cleanedABN)
+    if (existingSub) {
+      return NextResponse.json({ error: 'A subcontractor with this ABN already exists' }, { status: 409 })
     }
 
     // Create subcontractor
     const subcontractorId = uuidv4()
-    const cleanedABN = abn ? abn.replace(/\s/g, '') : null
 
     db.prepare(`
-      INSERT INTO subcontractors (id, company_id, name, abn, contact_name, contact_email, contact_phone, trade)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO subcontractors (
+        id, company_id, name, abn, trading_name, trade, address,
+        contact_name, contact_email, contact_phone,
+        broker_name, broker_email, broker_phone
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       subcontractorId,
       user.company_id,
       name.trim(),
       cleanedABN,
+      tradingName?.trim() || null,
+      trade?.trim() || null,
+      address?.trim() || null,
       contactName?.trim() || null,
       contactEmail?.toLowerCase().trim() || null,
       contactPhone?.trim() || null,
-      trade?.trim() || null
+      brokerName?.trim() || null,
+      brokerEmail?.toLowerCase().trim() || null,
+      brokerPhone?.trim() || null
     )
 
     // Log the action
