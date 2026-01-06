@@ -19,12 +19,15 @@ import {
   Trash2,
   Mail,
   Copy,
-  Check
+  Check,
+  Loader2,
+  X
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { Select } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -72,6 +75,26 @@ interface Subcontractor {
   trade: string | null
 }
 
+interface InsuranceRequirement {
+  id?: string
+  coverage_type: string
+  minimum_limit: number | null
+  limit_type: string
+  maximum_excess: number | null
+  principal_indemnity_required: boolean
+  cross_liability_required: boolean
+  other_requirements: string | null
+}
+
+const COVERAGE_TYPES = [
+  { value: 'public_liability', label: 'Public Liability' },
+  { value: 'products_liability', label: 'Products Liability' },
+  { value: 'workers_comp', label: 'Workers Compensation' },
+  { value: 'professional_indemnity', label: 'Professional Indemnity' },
+  { value: 'motor_vehicle', label: 'Motor Vehicle' },
+  { value: 'contract_works', label: 'Contract Works' }
+]
+
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   active: { bg: 'bg-green-100', text: 'text-green-700', label: 'Active' },
   completed: { bg: 'bg-slate-100', text: 'text-slate-700', label: 'Completed' },
@@ -92,6 +115,8 @@ export default function ProjectDetailPage() {
   const [showAddSubModal, setShowAddSubModal] = useState(false)
   const [availableSubcontractors, setAvailableSubcontractors] = useState<Subcontractor[]>([])
   const [selectedSubcontractorId, setSelectedSubcontractorId] = useState('')
+  const [onSiteDate, setOnSiteDate] = useState('')
+  const [subSearchQuery, setSubSearchQuery] = useState('')
   const [isAddingSub, setIsAddingSub] = useState(false)
 
   // Delete confirmation modal state
@@ -100,6 +125,16 @@ export default function ProjectDetailPage() {
 
   // Copy email state
   const [emailCopied, setEmailCopied] = useState(false)
+
+  // Requirements modal state
+  const [showRequirementsModal, setShowRequirementsModal] = useState(false)
+  const [isSavingRequirements, setIsSavingRequirements] = useState(false)
+  const [editingRequirements, setEditingRequirements] = useState<InsuranceRequirement[]>([])
+
+  // Save as template modal state
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState(false)
+  const [isSavingTemplate, setIsSavingTemplate] = useState(false)
+  const [templateName, setTemplateName] = useState('')
 
   useEffect(() => {
     fetchUserRole()
@@ -158,6 +193,9 @@ export default function ProjectDetailPage() {
 
   const handleOpenAddSubModal = () => {
     fetchAvailableSubcontractors()
+    setSelectedSubcontractorId('')
+    setOnSiteDate('')
+    setSubSearchQuery('')
     setShowAddSubModal(true)
   }
 
@@ -176,7 +214,7 @@ export default function ProjectDetailPage() {
       const response = await fetch(`/api/projects/${params.id}/subcontractors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subcontractorId: selectedSubcontractorId })
+        body: JSON.stringify({ subcontractorId: selectedSubcontractorId, onSiteDate: onSiteDate || null })
       })
 
       const data = await response.json()
@@ -201,6 +239,168 @@ export default function ProjectDetailPage() {
       })
     } finally {
       setIsAddingSub(false)
+    }
+  }
+
+  const handleOpenRequirementsModal = () => {
+    // Map existing requirements to editing state
+    const existingRequirements: InsuranceRequirement[] = (project?.requirements || []).map(req => ({
+      id: req.id,
+      coverage_type: req.coverage_type,
+      minimum_limit: req.minimum_limit,
+      limit_type: 'per_occurrence',
+      maximum_excess: req.maximum_excess,
+      principal_indemnity_required: false,
+      cross_liability_required: false,
+      other_requirements: null
+    }))
+    setEditingRequirements(existingRequirements)
+    setShowRequirementsModal(true)
+  }
+
+  const handleAddRequirement = () => {
+    setEditingRequirements([...editingRequirements, {
+      coverage_type: '',
+      minimum_limit: null,
+      limit_type: 'per_occurrence',
+      maximum_excess: null,
+      principal_indemnity_required: false,
+      cross_liability_required: false,
+      other_requirements: null
+    }])
+  }
+
+  const handleRemoveRequirement = (index: number) => {
+    setEditingRequirements(editingRequirements.filter((_, i) => i !== index))
+  }
+
+  const handleUpdateRequirement = (index: number, field: keyof InsuranceRequirement, value: string | number | boolean | null) => {
+    const updated = [...editingRequirements]
+    updated[index] = { ...updated[index], [field]: value }
+    setEditingRequirements(updated)
+  }
+
+  const handleOpenSaveTemplateModal = () => {
+    setTemplateName('')
+    setShowSaveTemplateModal(true)
+  }
+
+  const handleSaveAsTemplate = async () => {
+    if (!templateName.trim()) {
+      toast({
+        title: "Validation Error",
+        description: "Template name is required",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // Get current project requirements
+    const requirements = project?.requirements || []
+    if (requirements.length === 0) {
+      toast({
+        title: "Error",
+        description: "No requirements to save. Configure requirements first.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsSavingTemplate(true)
+    try {
+      const response = await fetch('/api/requirement-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: templateName.trim(),
+          requirements: requirements.map(req => ({
+            coverage_type: req.coverage_type,
+            minimum_limit: req.minimum_limit,
+            limit_type: 'per_occurrence',
+            maximum_excess: req.maximum_excess,
+            principal_indemnity_required: false,
+            cross_liability_required: false
+          }))
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save template')
+      }
+
+      toast({
+        title: "Success",
+        description: `Template "${templateName}" saved successfully`
+      })
+
+      setShowSaveTemplateModal(false)
+      setTemplateName('')
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Failed to save template',
+        variant: "destructive"
+      })
+    } finally {
+      setIsSavingTemplate(false)
+    }
+  }
+
+  const handleSaveRequirements = async () => {
+    // Validate - all requirements need a coverage type
+    const invalid = editingRequirements.some(req => !req.coverage_type)
+    if (invalid) {
+      toast({
+        title: "Validation Error",
+        description: "All requirements must have a coverage type selected",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // Check for duplicates
+    const coverageTypes = editingRequirements.map(r => r.coverage_type)
+    const uniqueTypes = new Set(coverageTypes)
+    if (coverageTypes.length !== uniqueTypes.size) {
+      toast({
+        title: "Validation Error",
+        description: "Each coverage type can only be added once",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsSavingRequirements(true)
+    try {
+      const response = await fetch(`/api/projects/${params.id}/requirements`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirements: editingRequirements })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to save requirements')
+      }
+
+      toast({
+        title: "Success",
+        description: "Insurance requirements saved successfully"
+      })
+
+      setShowRequirementsModal(false)
+      fetchProject() // Refresh project data
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Failed to save requirements',
+        variant: "destructive"
+      })
+    } finally {
+      setIsSavingRequirements(false)
     }
   }
 
@@ -615,10 +815,22 @@ export default function ProjectDetailPage() {
                   <div className="text-center py-4 text-slate-500 text-sm">
                     <p>No requirements set</p>
                     {canModify && (
-                      <Button variant="outline" size="sm" className="mt-2">
+                      <Button variant="outline" size="sm" className="mt-2" onClick={handleOpenRequirementsModal}>
                         Configure Requirements
                       </Button>
                     )}
+                  </div>
+                )}
+                {project.requirements.length > 0 && canModify && (
+                  <div className="space-y-2 mt-3">
+                    <Button variant="outline" size="sm" className="w-full" onClick={handleOpenRequirementsModal}>
+                      <Settings className="h-4 w-4 mr-2" />
+                      Edit Requirements
+                    </Button>
+                    <Button variant="ghost" size="sm" className="w-full text-slate-600" onClick={handleOpenSaveTemplateModal}>
+                      <Shield className="h-4 w-4 mr-2" />
+                      Save as Template
+                    </Button>
                   </div>
                 )}
               </CardContent>
@@ -638,8 +850,21 @@ export default function ProjectDetailPage() {
           </DialogHeader>
 
           <form onSubmit={(e) => { e.preventDefault(); handleAddSubcontractor(); }} className="space-y-4 mt-4">
+            {/* Search Field */}
             <div className="space-y-2">
-              <Label htmlFor="subcontractor">Subcontractor</Label>
+              <Label htmlFor="subSearch">Search Subcontractors</Label>
+              <Input
+                id="subSearch"
+                type="text"
+                placeholder="Search by name, ABN, or trade..."
+                value={subSearchQuery}
+                onChange={(e) => setSubSearchQuery(e.target.value)}
+              />
+            </div>
+
+            {/* Subcontractor Selection */}
+            <div className="space-y-2">
+              <Label htmlFor="subcontractor">Subcontractor *</Label>
               <Select
                 id="subcontractor"
                 value={selectedSubcontractorId}
@@ -647,17 +872,41 @@ export default function ProjectDetailPage() {
                 required
               >
                 <option value="">Select a subcontractor...</option>
-                {availableSubcontractors.map(sub => (
-                  <option key={sub.id} value={sub.id}>
-                    {sub.name} {sub.trade ? `(${sub.trade})` : ''} - ABN: {sub.abn}
-                  </option>
-                ))}
+                {availableSubcontractors
+                  .filter(sub => {
+                    if (!subSearchQuery) return true
+                    const query = subSearchQuery.toLowerCase()
+                    return (
+                      sub.name.toLowerCase().includes(query) ||
+                      sub.abn.includes(query) ||
+                      (sub.trade && sub.trade.toLowerCase().includes(query))
+                    )
+                  })
+                  .map(sub => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.name} {sub.trade ? `(${sub.trade})` : ''} - ABN: {sub.abn}
+                    </option>
+                  ))}
               </Select>
               {availableSubcontractors.length === 0 && (
                 <p className="text-sm text-slate-500">
                   No subcontractors available. Create one first in the Subcontractors section.
                 </p>
               )}
+            </div>
+
+            {/* On-Site Date */}
+            <div className="space-y-2">
+              <Label htmlFor="onSiteDate">On-Site Date</Label>
+              <Input
+                id="onSiteDate"
+                type="date"
+                value={onSiteDate}
+                onChange={(e) => setOnSiteDate(e.target.value)}
+              />
+              <p className="text-xs text-slate-500">
+                The expected date when this subcontractor will be on-site (optional)
+              </p>
             </div>
 
             <DialogFooter>
@@ -704,6 +953,217 @@ export default function ProjectDetailPage() {
               disabled={isDeleting}
             >
               {isDeleting ? 'Deleting...' : 'Delete Project'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Insurance Requirements Modal */}
+      <Dialog open={showRequirementsModal} onOpenChange={setShowRequirementsModal}>
+        <DialogContent onClose={() => setShowRequirementsModal(false)} className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-primary" />
+              Configure Insurance Requirements
+            </DialogTitle>
+            <DialogDescription>
+              Set the insurance requirements for subcontractors on this project
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            {editingRequirements.length === 0 ? (
+              <div className="text-center py-8 text-slate-500">
+                <Shield className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                <p>No requirements configured</p>
+                <p className="text-sm">Add requirements to specify insurance needs for this project</p>
+              </div>
+            ) : (
+              editingRequirements.map((req, index) => (
+                <div key={index} className="border rounded-lg p-4 space-y-4 relative">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="absolute top-2 right-2 h-8 w-8 p-0"
+                    onClick={() => handleRemoveRequirement(index)}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Coverage Type */}
+                    <div className="space-y-2">
+                      <Label>Coverage Type *</Label>
+                      <Select
+                        value={req.coverage_type}
+                        onChange={(e) => handleUpdateRequirement(index, 'coverage_type', e.target.value)}
+                        required
+                      >
+                        <option value="">Select coverage type...</option>
+                        {COVERAGE_TYPES.map(type => (
+                          <option key={type.value} value={type.value}>
+                            {type.label}
+                          </option>
+                        ))}
+                      </Select>
+                    </div>
+
+                    {/* Limit Type */}
+                    <div className="space-y-2">
+                      <Label>Limit Type</Label>
+                      <Select
+                        value={req.limit_type}
+                        onChange={(e) => handleUpdateRequirement(index, 'limit_type', e.target.value)}
+                      >
+                        <option value="per_occurrence">Per Occurrence</option>
+                        <option value="aggregate">Aggregate</option>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Minimum Limit */}
+                    <div className="space-y-2">
+                      <Label>Minimum Limit ($)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1000"
+                        placeholder="e.g., 20000000"
+                        value={req.minimum_limit || ''}
+                        onChange={(e) => handleUpdateRequirement(index, 'minimum_limit', e.target.value ? parseInt(e.target.value) : null)}
+                      />
+                    </div>
+
+                    {/* Maximum Excess */}
+                    <div className="space-y-2">
+                      <Label>Maximum Excess ($)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="1000"
+                        placeholder="e.g., 10000"
+                        value={req.maximum_excess || ''}
+                        onChange={(e) => handleUpdateRequirement(index, 'maximum_excess', e.target.value ? parseInt(e.target.value) : null)}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Checkbox Options */}
+                  <div className="flex items-center gap-6">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={req.principal_indemnity_required}
+                        onChange={(e) => handleUpdateRequirement(index, 'principal_indemnity_required', e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm">Principal Indemnity Required</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={req.cross_liability_required}
+                        onChange={(e) => handleUpdateRequirement(index, 'cross_liability_required', e.target.checked)}
+                        className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                      />
+                      <span className="text-sm">Cross Liability Required</span>
+                    </label>
+                  </div>
+                </div>
+              ))
+            )}
+
+            <Button type="button" variant="outline" className="w-full" onClick={handleAddRequirement}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add Requirement
+            </Button>
+          </div>
+
+          <DialogFooter className="mt-6">
+            <Button type="button" variant="outline" onClick={() => setShowRequirementsModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveRequirements}
+              disabled={isSavingRequirements}
+            >
+              {isSavingRequirements ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Requirements'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save as Template Modal */}
+      <Dialog open={showSaveTemplateModal} onOpenChange={setShowSaveTemplateModal}>
+        <DialogContent onClose={() => setShowSaveTemplateModal(false)}>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-primary" />
+              Save as Template
+            </DialogTitle>
+            <DialogDescription>
+              Save the current insurance requirements as a reusable template
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="templateName">Template Name *</Label>
+              <Input
+                id="templateName"
+                value={templateName}
+                onChange={(e) => setTemplateName(e.target.value)}
+                placeholder="e.g., High-Rise Construction"
+              />
+            </div>
+
+            {project?.requirements && project.requirements.length > 0 && (
+              <div className="p-3 bg-slate-50 rounded-lg border">
+                <p className="text-sm font-medium text-slate-700 mb-2">Requirements to save:</p>
+                <ul className="text-sm text-slate-600 space-y-1">
+                  {project.requirements.map((req, idx) => (
+                    <li key={idx} className="flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-primary rounded-full"></span>
+                      <span className="capitalize">{req.coverage_type.replace(/_/g, ' ')}</span>
+                      {req.minimum_limit && (
+                        <span className="text-slate-500">
+                          - ${req.minimum_limit.toLocaleString()} min
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="mt-6">
+            <Button type="button" variant="outline" onClick={() => setShowSaveTemplateModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveAsTemplate}
+              disabled={isSavingTemplate || !templateName.trim()}
+            >
+              {isSavingTemplate ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Template'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

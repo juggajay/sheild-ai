@@ -420,3 +420,56 @@ The ABN validation uses the official Australian checksum algorithm:
 - Subcontractors page is fully functional with ABN validation
 - Test user: test_session4_unique@example.com / TestPass123! (admin)
 - Test subcontractor created: "TEST_VERIFY_12345 Plumbing Pty Ltd" (ABN: 99887766554)
+
+---
+
+## Session 7 Summary (Coding Agent)
+Date: 2026-01-06
+
+### Completed Features
+
+1. **Feature #35: Duplicate subcontractor detection** ✅
+   - System detects existing ABNs during CSV import
+   - Shows duplicate records with existing name and ABN
+   - Provides "Select All to Merge" and "Skip All" options
+   - Users can select individual duplicates to merge
+   - Merge updates existing record with new data (not duplicate)
+   - Invalid ABN checksums are rejected with error messages
+   - Verified end-to-end with browser automation
+
+2. **Feature #36: Add subcontractor to project** ✅
+   - Added search field to filter subcontractors by name, ABN, or trade
+   - Added on-site date field to modal
+   - Subcontractor dropdown filters based on search query
+   - API accepts onSiteDate parameter
+   - Successfully adds subcontractor to project
+   - Project stats update correctly (Total Subcontractors count)
+   - Verified end-to-end with browser automation
+
+### Key Files Modified
+
+```
+app/dashboard/projects/[id]/page.tsx - Added search field, on-site date, and filter logic to add subcontractor modal
+app/api/projects/[id]/subcontractors/route.ts - Already supports onSiteDate parameter
+app/api/subcontractors/import/route.ts - Already has duplicate detection and merge logic
+app/dashboard/subcontractors/page.tsx - Already has CSV import with duplicate handling UI
+```
+
+### Regression Tests Performed
+- Login feature (Feature #20): Verified no information leakage on failed login
+  - Non-existent email shows "Invalid email or password"
+  - Existing email with wrong password shows same message
+
+### Feature Statistics
+- Total Features: 220
+- Passing: 35
+- In Progress: 0
+- Percentage Complete: 15.9%
+
+### Notes for Next Agent
+- Dev server runs on port 3000
+- Next feature: Use `feature_get_next` to get it
+- Test user: test_session4_unique@example.com / TestPass123! (admin)
+- Subcontractor added to Brisbane Commercial Plaza project: TEST_VERIFY_12345 Plumbing Pty Ltd
+- CSV import duplicate detection working - test file: test_import_duplicates.csv
+- Merged subcontractor visible: DUPLICATE_TEST_67890 (was Import Test Company 1)

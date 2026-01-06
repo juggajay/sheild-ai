@@ -11,7 +11,8 @@ import {
   DollarSign,
   User,
   Loader2,
-  Building
+  Building,
+  Shield
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -24,6 +25,21 @@ interface TeamMember {
   name: string
   email: string
   role: string
+}
+
+interface RequirementTemplate {
+  id: string
+  name: string
+  type: string
+  requirements: Array<{
+    coverage_type: string
+    minimum_limit: number | null
+    limit_type: string
+    maximum_excess: number | null
+    principal_indemnity_required: boolean
+    cross_liability_required: boolean
+  }>
+  is_standard: boolean
 }
 
 const AUSTRALIAN_STATES = [
@@ -42,6 +58,7 @@ export default function NewProjectPage() {
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(false)
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
+  const [templates, setTemplates] = useState<RequirementTemplate[]>([])
 
   // Form state
   const [name, setName] = useState('')
@@ -51,9 +68,11 @@ export default function NewProjectPage() {
   const [endDate, setEndDate] = useState('')
   const [estimatedValue, setEstimatedValue] = useState('')
   const [projectManagerId, setProjectManagerId] = useState('')
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
 
   useEffect(() => {
     fetchTeamMembers()
+    fetchTemplates()
   }, [])
 
   const fetchTeamMembers = async () => {
@@ -72,6 +91,22 @@ export default function NewProjectPage() {
     }
   }
 
+  const fetchTemplates = async () => {
+    try {
+      const response = await fetch('/api/requirement-templates')
+      if (response.ok) {
+        const data = await response.json()
+        setTemplates(data.templates || [])
+      }
+    } catch (error) {
+      console.error('Failed to fetch templates:', error)
+    }
+  }
+
+  const getSelectedTemplate = () => {
+    return templates.find(t => t.id === selectedTemplateId)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -87,6 +122,9 @@ export default function NewProjectPage() {
     setIsLoading(true)
 
     try {
+      // Get template requirements if selected
+      const selectedTemplate = getSelectedTemplate()
+
       const response = await fetch('/api/projects', {
         method: 'POST',
         headers: {
@@ -99,7 +137,8 @@ export default function NewProjectPage() {
           startDate: startDate || null,
           endDate: endDate || null,
           estimatedValue: estimatedValue ? parseFloat(estimatedValue) : null,
-          projectManagerId: projectManagerId || null
+          projectManagerId: projectManagerId || null,
+          templateId: selectedTemplateId || null
         })
       })
 
@@ -109,9 +148,20 @@ export default function NewProjectPage() {
         throw new Error(data.error || 'Failed to create project')
       }
 
+      // If template selected, add requirements to the project
+      if (selectedTemplate && selectedTemplate.requirements.length > 0) {
+        await fetch(`/api/projects/${data.project.id}/requirements`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ requirements: selectedTemplate.requirements })
+        })
+      }
+
       toast({
         title: "Success",
-        description: "Project created successfully"
+        description: selectedTemplate
+          ? `Project created with ${selectedTemplate.name} template requirements`
+          : "Project created successfully"
       })
 
       // Redirect to the new project
@@ -278,6 +328,59 @@ export default function NewProjectPage() {
                 <p className="text-xs text-slate-500">
                   The project manager will have full access to this project
                 </p>
+              </div>
+
+              {/* Requirement Template */}
+              <div className="space-y-2">
+                <Label htmlFor="template" className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-slate-400" />
+                  Insurance Requirement Template
+                </Label>
+                <select
+                  id="template"
+                  value={selectedTemplateId}
+                  onChange={(e) => setSelectedTemplateId(e.target.value)}
+                  className="w-full h-10 px-3 rounded-md border border-slate-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value="">No template (configure later)</option>
+                  {templates.filter(t => t.is_standard).map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                  {templates.filter(t => !t.is_standard).length > 0 && (
+                    <optgroup label="Custom Templates">
+                      {templates.filter(t => !t.is_standard).map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+                <p className="text-xs text-slate-500">
+                  Select a template to auto-populate insurance requirements for subcontractors
+                </p>
+                {getSelectedTemplate() && (
+                  <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                    <p className="text-sm font-medium text-blue-800 mb-2">
+                      {getSelectedTemplate()?.name} includes:
+                    </p>
+                    <ul className="text-xs text-blue-700 space-y-1">
+                      {getSelectedTemplate()?.requirements.map((req, idx) => (
+                        <li key={idx} className="flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
+                          <span className="capitalize">{req.coverage_type.replace(/_/g, ' ')}</span>
+                          {req.minimum_limit && (
+                            <span className="text-blue-600">
+                              - ${(req.minimum_limit / 1000000).toFixed(0)}M min
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
