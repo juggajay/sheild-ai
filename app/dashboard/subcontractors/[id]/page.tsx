@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import {
   ArrowLeft,
@@ -25,7 +25,9 @@ import {
   Send,
   CheckCheck,
   MailOpen,
-  X
+  X,
+  ChevronRight,
+  Home
 } from "lucide-react"
 import {
   Dialog,
@@ -163,6 +165,9 @@ const VERIFICATION_STATUS_STYLES: Record<string, { bg: string; text: string; lab
 
 export default function SubcontractorDetailPage() {
   const params = useParams()
+  const searchParams = useSearchParams()
+  const fromProjectId = searchParams.get('fromProject')
+  const projectName = searchParams.get('projectName')
   const [subcontractor, setSubcontractor] = useState<Subcontractor | null>(null)
   const [projects, setProjects] = useState<Project[]>([])
   const [cocDocuments, setCocDocuments] = useState<COCDocument[]>([])
@@ -253,18 +258,37 @@ export default function SubcontractorDetailPage() {
     return null
   }
 
+  // Determine back link - go to project if came from project, otherwise go to subcontractors list
+  const backLink = fromProjectId
+    ? `/dashboard/projects/${fromProjectId}`
+    : '/dashboard/subcontractors'
+
   return (
     <>
       {/* Top Bar */}
       <header className="bg-white border-b px-6 py-4 sticky top-0 z-10">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/dashboard/subcontractors">
+            <Link href={backLink}>
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             </Link>
             <div>
+              {/* Breadcrumb Navigation */}
+              {fromProjectId && projectName && (
+                <nav className="flex items-center gap-1 text-sm text-slate-500 mb-1">
+                  <Link href="/dashboard/projects" className="hover:text-primary transition-colors">
+                    Projects
+                  </Link>
+                  <ChevronRight className="h-4 w-4" />
+                  <Link href={`/dashboard/projects/${fromProjectId}`} className="hover:text-primary transition-colors">
+                    {decodeURIComponent(projectName)}
+                  </Link>
+                  <ChevronRight className="h-4 w-4" />
+                  <span className="text-slate-700 font-medium">Subcontractor</span>
+                </nav>
+              )}
               <div className="flex items-center gap-3">
                 <h1 className="text-2xl font-semibold text-slate-900">{subcontractor.name}</h1>
                 {subcontractor.trade && (

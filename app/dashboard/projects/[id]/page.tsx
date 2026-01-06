@@ -868,7 +868,7 @@ export default function ProjectDetailPage() {
                     {filteredSubcontractors.map((sub) => (
                       <div key={sub.project_subcontractor_id} className="py-4 flex items-center justify-between group">
                         <Link
-                          href={`/dashboard/subcontractors/${sub.id}`}
+                          href={`/dashboard/subcontractors/${sub.id}?fromProject=${params.id}&projectName=${encodeURIComponent(project.name)}`}
                           className="flex-1 hover:bg-slate-50 -my-4 py-4 -ml-4 pl-4 rounded-l-lg transition-colors cursor-pointer"
                         >
                           <div className="flex items-center gap-3">
