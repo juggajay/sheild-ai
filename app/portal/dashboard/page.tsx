@@ -206,22 +206,24 @@ export default function PortalDashboardPage() {
 
         {/* Quick Actions */}
         <div className="grid md:grid-cols-2 gap-6 mb-8">
-          <Card className="cursor-pointer hover:shadow-md transition-shadow">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5 text-primary" />
-                Upload Certificate
-              </CardTitle>
-              <CardDescription>
-                Upload a new Certificate of Currency for instant verification
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Button className="w-full">
-                Upload COC
-              </Button>
-            </CardContent>
-          </Card>
+          <Link href="/portal/upload">
+            <Card className="cursor-pointer hover:shadow-md transition-shadow h-full">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Upload className="h-5 w-5 text-primary" />
+                  Upload Certificate
+                </CardTitle>
+                <CardDescription>
+                  Upload a new Certificate of Currency for instant verification
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full">
+                  Upload COC
+                </Button>
+              </CardContent>
+            </Card>
+          </Link>
 
           <Card className="cursor-pointer hover:shadow-md transition-shadow">
             <CardHeader>
