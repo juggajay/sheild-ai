@@ -21,7 +21,8 @@ import {
   Copy,
   Check,
   Loader2,
-  X
+  X,
+  Filter
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -125,6 +126,7 @@ export default function ProjectDetailPage() {
   // Project subcontractors state
   const [projectSubcontractors, setProjectSubcontractors] = useState<ProjectSubcontractor[]>([])
   const [isLoadingSubcontractors, setIsLoadingSubcontractors] = useState(false)
+  const [subStatusFilter, setSubStatusFilter] = useState<string>('all')
 
   // Add subcontractor modal state
   const [showAddSubModal, setShowAddSubModal] = useState(false)
@@ -612,6 +614,11 @@ export default function ProjectDetailPage() {
     ? Math.round((project.counts.compliant / project.counts.total) * 100)
     : null
 
+  // Filter subcontractors by status
+  const filteredSubcontractors = subStatusFilter === 'all'
+    ? projectSubcontractors
+    : projectSubcontractors.filter(sub => sub.status === subStatusFilter)
+
   return (
     <>
       {/* Top Bar */}
@@ -764,12 +771,29 @@ export default function ProjectDetailPage() {
                     <CardTitle>Subcontractors</CardTitle>
                     <CardDescription>All subcontractors assigned to this project</CardDescription>
                   </div>
-                  {canModify && (
-                    <Button size="sm" onClick={handleOpenAddSubModal}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Subcontractor
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-3">
+                    {/* Status Filter */}
+                    <div className="flex items-center gap-2">
+                      <Filter className="h-4 w-4 text-slate-400" />
+                      <Select
+                        value={subStatusFilter}
+                        onChange={(e) => setSubStatusFilter(e.target.value)}
+                        className="w-40"
+                      >
+                        <option value="all">All Status</option>
+                        <option value="compliant">Compliant</option>
+                        <option value="non_compliant">Non-Compliant</option>
+                        <option value="pending">Pending</option>
+                        <option value="exception">Exception</option>
+                      </Select>
+                    </div>
+                    {canModify && (
+                      <Button size="sm" onClick={handleOpenAddSubModal}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Subcontractor
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -784,9 +808,15 @@ export default function ProjectDetailPage() {
                     <p>No subcontractors yet</p>
                     <p className="text-sm">Add subcontractors to get started</p>
                   </div>
+                ) : filteredSubcontractors.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">
+                    <Filter className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                    <p>No subcontractors match the filter</p>
+                    <p className="text-sm">Try selecting a different status filter</p>
+                  </div>
                 ) : (
                   <div className="divide-y">
-                    {projectSubcontractors.map((sub) => (
+                    {filteredSubcontractors.map((sub) => (
                       <div key={sub.project_subcontractor_id} className="py-4 flex items-center justify-between">
                         <div className="flex-1">
                           <div className="flex items-center gap-3">
