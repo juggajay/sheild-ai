@@ -316,10 +316,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Project and subcontractor required' }, { status: 400 })
     }
 
-    // Verify the subcontractor record matches the portal user's email
+    // Verify the user has access to this subcontractor
+    // Either: 1) User is the subcontractor (contact_email matches)
+    //     or: 2) User is the broker (broker_email matches)
     const subcontractor = db.prepare(`
-      SELECT * FROM subcontractors WHERE id = ? AND contact_email = ?
-    `).get(subcontractorId, user.email) as Subcontractor | undefined
+      SELECT * FROM subcontractors WHERE id = ? AND (contact_email = ? OR broker_email = ?)
+    `).get(subcontractorId, user.email, user.email) as Subcontractor | undefined
 
     if (!subcontractor) {
       return NextResponse.json({ error: 'Not authorized for this subcontractor' }, { status: 403 })
