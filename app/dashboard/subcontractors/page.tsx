@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Upload,
+  Download,
   FileSpreadsheet,
   ArrowRight,
   GitMerge,
@@ -287,6 +288,71 @@ export default function SubcontractorsPage() {
         setAbnError(validation.error || 'Invalid ABN')
       }
     }
+  }
+
+  // CSV Export function
+  const handleExportCSV = () => {
+    if (subcontractors.length === 0) {
+      toast({
+        title: "No data to export",
+        description: "Add some subcontractors first",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // Define CSV headers
+    const headers = [
+      'Name',
+      'ABN',
+      'Trading Name',
+      'Trade',
+      'Address',
+      'Contact Name',
+      'Contact Email',
+      'Contact Phone',
+      'Broker Name',
+      'Broker Email',
+      'Broker Phone',
+      'Project Count',
+      'Created At'
+    ]
+
+    // Build CSV content
+    const csvContent = [
+      headers.join(','),
+      ...subcontractors.map(sub => [
+        `"${(sub.name || '').replace(/"/g, '""')}"`,
+        `"${(sub.abn || '').replace(/"/g, '""')}"`,
+        `"${(sub.trading_name || '').replace(/"/g, '""')}"`,
+        `"${(sub.trade || '').replace(/"/g, '""')}"`,
+        `"${(sub.address || '').replace(/"/g, '""')}"`,
+        `"${(sub.contact_name || '').replace(/"/g, '""')}"`,
+        `"${(sub.contact_email || '').replace(/"/g, '""')}"`,
+        `"${(sub.contact_phone || '').replace(/"/g, '""')}"`,
+        `"${(sub.broker_name || '').replace(/"/g, '""')}"`,
+        `"${(sub.broker_email || '').replace(/"/g, '""')}"`,
+        `"${(sub.broker_phone || '').replace(/"/g, '""')}"`,
+        sub.project_count || 0,
+        `"${(sub.created_at || '').replace(/"/g, '""')}"`
+      ].join(','))
+    ].join('\n')
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `subcontractors_export_${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    toast({
+      title: "Export Complete",
+      description: `Exported ${subcontractors.length} subcontractors to CSV`
+    })
   }
 
   // CSV Import functions
@@ -571,6 +637,26 @@ export default function SubcontractorsPage() {
       return
     }
 
+    // Validate email format if provided
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (formData.contactEmail && !emailRegex.test(formData.contactEmail)) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid contact email address",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (formData.brokerEmail && !emailRegex.test(formData.brokerEmail)) {
+      toast({
+        title: "Validation Error",
+        description: "Please enter a valid broker email address",
+        variant: "destructive"
+      })
+      return
+    }
+
     setIsAdding(true)
     try {
       const response = await fetch('/api/subcontractors', {
@@ -632,6 +718,10 @@ export default function SubcontractorsPage() {
           </div>
           {canAddSubcontractors && (
             <div className="flex gap-2">
+              <Button variant="outline" onClick={handleExportCSV}>
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
               <Button variant="outline" onClick={handleOpenImportModal}>
                 <Upload className="h-4 w-4 mr-2" />
                 Import CSV

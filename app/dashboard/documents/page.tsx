@@ -206,13 +206,19 @@ export default function DocumentsPage() {
 
   const validateAndAddFiles = (files: File[]) => {
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif']
+    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif']
     const maxSize = 10 * 1024 * 1024 // 10MB
     const validFiles: File[] = []
     const errors: string[] = []
 
     for (const file of files) {
-      if (!allowedTypes.includes(file.type)) {
-        errors.push(`${file.name}: Invalid file type`)
+      // Check file extension as well as MIME type
+      const extension = '.' + file.name.split('.').pop()?.toLowerCase()
+      const isValidType = allowedTypes.includes(file.type) ||
+        (file.type === '' && allowedExtensions.includes(extension))
+
+      if (!isValidType) {
+        errors.push(`${file.name}: Invalid file type. Only PDF and image files (${allowedExtensions.join(', ')}) are accepted.`)
         continue
       }
       if (file.size > maxSize) {
@@ -224,8 +230,8 @@ export default function DocumentsPage() {
 
     if (errors.length > 0) {
       toast({
-        title: "Some files were rejected",
-        description: errors.slice(0, 3).join(', ') + (errors.length > 3 ? ` and ${errors.length - 3} more` : ''),
+        title: "File type not accepted",
+        description: errors.slice(0, 3).join(' ') + (errors.length > 3 ? ` And ${errors.length - 3} more.` : ''),
         variant: "destructive"
       })
     }

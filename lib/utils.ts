@@ -121,3 +121,53 @@ export function debounce<T extends (...args: unknown[]) => unknown>(
     timeout = setTimeout(() => func(...args), wait)
   }
 }
+
+/**
+ * Custom error class for timeout errors
+ */
+export class TimeoutError extends Error {
+  constructor(message: string = 'Request timed out') {
+    super(message)
+    this.name = 'TimeoutError'
+  }
+}
+
+/**
+ * Fetch with timeout support
+ * @param url - The URL to fetch
+ * @param options - Fetch options including timeout
+ * @param timeout - Timeout in milliseconds (default: 30000ms = 30 seconds)
+ * @returns Promise with the response
+ * @throws TimeoutError if the request times out
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeout: number = 30000
+): Promise<Response> {
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    })
+    clearTimeout(timeoutId)
+    return response
+  } catch (error) {
+    clearTimeout(timeoutId)
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new TimeoutError(`Request to ${url} timed out after ${timeout}ms`)
+    }
+    throw error
+  }
+}
+
+/**
+ * Check if an error is a timeout error
+ */
+export function isTimeoutError(error: unknown): error is TimeoutError {
+  return error instanceof TimeoutError ||
+    (error instanceof Error && error.name === 'AbortError')
+}

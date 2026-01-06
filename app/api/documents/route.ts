@@ -614,9 +614,12 @@ export async function POST(request: NextRequest) {
 
     // Validate file type (PDF or image)
     const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png', 'image/gif']
-    if (!allowedTypes.includes(file.type)) {
+    const allowedExtensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif']
+    const fileExtension = '.' + file.name.split('.').pop()?.toLowerCase()
+
+    if (!allowedTypes.includes(file.type) && !allowedExtensions.includes(fileExtension)) {
       return NextResponse.json({
-        error: 'Invalid file type. Only PDF and image files are allowed'
+        error: `Invalid file type. Only PDF and image files are accepted (${allowedExtensions.join(', ')}). You uploaded: ${file.name}`
       }, { status: 400 })
     }
 
@@ -661,8 +664,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate unique filename
-    const fileExtension = path.extname(file.name)
-    const uniqueFilename = `${uuidv4()}${fileExtension}`
+    const fileExt = path.extname(file.name)
+    const uniqueFilename = `${uuidv4()}${fileExt}`
     const filePath = path.join(uploadDir, uniqueFilename)
     const fileUrl = `/uploads/documents/${uniqueFilename}`
 
