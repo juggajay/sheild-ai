@@ -239,6 +239,30 @@ function initializeSchema(db: Database.Database) {
     )
   `)
 
+  // Password reset tokens table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      token TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `)
+
+  // Magic link tokens table (for portal users)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS magic_link_tokens (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `)
+
   // Email templates table
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_templates (
@@ -281,6 +305,10 @@ function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_verifications_coc ON verifications(coc_document_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_company ON audit_logs(company_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_token ON magic_link_tokens(token);
+    CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_email ON magic_link_tokens(email);
   `)
 }
 

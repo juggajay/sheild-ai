@@ -151,3 +151,185 @@ export function getUserWithCompany(userId: string): (User & { company_name?: str
   `).get(userId) as (User & { company_name?: string }) | undefined
   return user || null
 }
+
+/**
+ * Create a password reset token
+ */
+export function createPasswordResetToken(userId: string): { token: string; expiresAt: string } {
+  const db = getDb()
+  const tokenId = uuidv4()
+  const token = uuidv4() // Use a simple UUID as the reset token
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1 hour expiry
+
+  // Invalidate any existing tokens for this user
+  db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(userId)
+
+  // Create new token
+  db.prepare(`
+    INSERT INTO password_reset_tokens (id, user_id, token, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run(tokenId, userId, token, expiresAt)
+
+  return { token, expiresAt }
+}
+
+/**
+ * Validate a password reset token
+ */
+export function validatePasswordResetToken(token: string): { valid: boolean; userId?: string; error?: string } {
+  const db = getDb()
+
+  const resetToken = db.prepare(`
+    SELECT * FROM password_reset_tokens WHERE token = ?
+  `).get(token) as { id: string; user_id: string; token: string; expires_at: string; used: number } | undefined
+
+  if (!resetToken) {
+    return { valid: false, error: 'Invalid or expired reset link' }
+  }
+
+  if (resetToken.used) {
+    return { valid: false, error: 'This reset link has already been used' }
+  }
+
+  if (new Date(resetToken.expires_at) < new Date()) {
+    return { valid: false, error: 'This reset link has expired' }
+  }
+
+  return { valid: true, userId: resetToken.user_id }
+}
+
+/**
+ * Use a password reset token (mark as used)
+ */
+export function usePasswordResetToken(token: string): void {
+  const db = getDb()
+  db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE token = ?').run(token)
+}
+
+/**
+ * Get user by email
+ */
+export function getUserByEmail(email: string): User | null {
+  const db = getDb()
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase()) as User | undefined
+  return user || null
+}
+
+/**
+ * Update user password
+ */
+export async function updateUserPassword(userId: string, newPassword: string): Promise<void> {
+  const db = getDb()
+  const passwordHash = await hashPassword(newPassword)
+  db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(passwordHash, userId)
+
+  // Invalidate all existing sessions for this user
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+}
+
+/**
+ * Create a magic link token for portal users
+ */
+export function createMagicLinkToken(email: string): { token: string; expiresAt: string } {
+  const db = getDb()
+  const tokenId = uuidv4()
+  const token = uuidv4() // Use a simple UUID as the magic link token
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString() // 15 minute expiry
+
+  // Invalidate any existing tokens for this email
+  db.prepare('DELETE FROM magic_link_tokens WHERE email = ?').run(email.toLowerCase())
+
+  // Create new token
+  db.prepare(`
+    INSERT INTO magic_link_tokens (id, email, token, expires_at)
+    VALUES (?, ?, ?, ?)
+  `).run(tokenId, email.toLowerCase(), token, expiresAt)
+
+  return { token, expiresAt }
+}
+
+/**
+ * Validate a magic link token
+ */
+export function validateMagicLinkToken(token: string): { valid: boolean; email?: string; error?: string } {
+  const db = getDb()
+
+  const magicToken = db.prepare(`
+    SELECT * FROM magic_link_tokens WHERE token = ?
+  `).get(token) as { id: string; email: string; token: string; expires_at: string; used: number } | undefined
+
+  if (!magicToken) {
+    return { valid: false, error: 'Invalid or expired magic link' }
+  }
+
+  if (magicToken.used) {
+    return { valid: false, error: 'This magic link has already been used' }
+  }
+
+  if (new Date(magicToken.expires_at) < new Date()) {
+    return { valid: false, error: 'This magic link has expired' }
+  }
+
+  return { valid: true, email: magicToken.email }
+}
+
+/**
+ * Use a magic link token (mark as used)
+ */
+export function useMagicLinkToken(token: string): void {
+  const db = getDb()
+  db.prepare('UPDATE magic_link_tokens SET used = 1 WHERE token = ?').run(token)
+}
+
+/**
+ * Get or create a portal user by email
+ * Portal users are subcontractors or brokers with limited access
+ */
+export function getOrCreatePortalUser(email: string, role: 'subcontractor' | 'broker' = 'subcontractor'): User {
+  const db = getDb()
+  const normalizedEmail = email.toLowerCase()
+
+  // Check if user already exists
+  let user = db.prepare('SELECT * FROM users WHERE email = ?').get(normalizedEmail) as User | undefined
+
+  if (!user) {
+    // Create a new portal user
+    const userId = uuidv4()
+    const passwordHash = '$portal-user-no-password$' // Portal users don't have passwords
+
+    db.prepare(`
+      INSERT INTO users (id, email, password_hash, name, role)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(userId, normalizedEmail, passwordHash, 'Portal User', role)
+
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User
+  }
+
+  return user
+}
+
+/**
+ * Create a portal session for a user
+ */
+export function createPortalSession(userId: string): { session: Session; token: string } {
+  const db = getDb()
+  const sessionId = uuidv4()
+  const token = jwt.sign({ sessionId, userId, isPortal: true }, JWT_SECRET, { expiresIn: '24h' })
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours for portal
+
+  const stmt = db.prepare(`
+    INSERT INTO sessions (id, user_id, token, expires_at)
+    VALUES (?, ?, ?, ?)
+  `)
+  stmt.run(sessionId, userId, token, expiresAt)
+
+  const session: Session = {
+    id: sessionId,
+    user_id: userId,
+    token,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString()
+  }
+
+  return { session, token }
+}
