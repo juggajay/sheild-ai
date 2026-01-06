@@ -58,6 +58,7 @@ interface User {
 const STATUS_STYLES: Record<string, { bg: string; text: string; icon: React.ReactNode; label: string }> = {
   pending_approval: { bg: 'bg-amber-100', text: 'text-amber-700', icon: <Clock className="h-4 w-4" />, label: 'Pending Approval' },
   active: { bg: 'bg-green-100', text: 'text-green-700', icon: <CheckCircle className="h-4 w-4" />, label: 'Active' },
+  rejected: { bg: 'bg-red-100', text: 'text-red-700', icon: <XCircle className="h-4 w-4" />, label: 'Rejected' },
   expired: { bg: 'bg-red-100', text: 'text-red-700', icon: <XCircle className="h-4 w-4" />, label: 'Expired' },
   resolved: { bg: 'bg-slate-100', text: 'text-slate-700', icon: <CheckCircle className="h-4 w-4" />, label: 'Resolved' },
   closed: { bg: 'bg-slate-100', text: 'text-slate-700', icon: <XCircle className="h-4 w-4" />, label: 'Closed' }
@@ -231,6 +232,36 @@ export default function ExceptionsPage() {
     setPasswordError('')
   }
 
+  const handleApprovalAction = async (exceptionId: string, action: 'approve' | 'reject') => {
+    try {
+      const response = await fetch('/api/exceptions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ exceptionId, action })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to ${action} exception`)
+      }
+
+      toast({
+        title: action === 'approve' ? 'Exception Approved' : 'Exception Rejected',
+        description: data.message
+      })
+
+      // Refresh exceptions list
+      fetchData()
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : `Failed to ${action} exception`,
+        variant: "destructive"
+      })
+    }
+  }
+
   return (
     <>
       {/* Top Bar */}
@@ -305,7 +336,12 @@ export default function ExceptionsPage() {
         ) : (
           <div className="space-y-4">
             {filteredExceptions.map(exception => (
-              <ExceptionCard key={exception.id} exception={exception} />
+              <ExceptionCard
+                key={exception.id}
+                exception={exception}
+                user={user}
+                onApprovalAction={handleApprovalAction}
+              />
             ))}
           </div>
         )}
@@ -479,9 +515,24 @@ export default function ExceptionsPage() {
   )
 }
 
-function ExceptionCard({ exception }: { exception: Exception }) {
+interface ExceptionCardProps {
+  exception: Exception
+  user: User | null
+  onApprovalAction: (exceptionId: string, action: 'approve' | 'reject') => void
+}
+
+function ExceptionCard({ exception, user, onApprovalAction }: ExceptionCardProps) {
+  const [isProcessing, setIsProcessing] = useState(false)
   const statusStyle = STATUS_STYLES[exception.status] || STATUS_STYLES.active
   const riskStyle = RISK_STYLES[exception.risk_level] || RISK_STYLES.medium
+
+  const canApprove = user && ['admin', 'risk_manager'].includes(user.role) && exception.status === 'pending_approval'
+
+  const handleAction = async (action: 'approve' | 'reject') => {
+    setIsProcessing(true)
+    await onApprovalAction(exception.id, action)
+    setIsProcessing(false)
+  }
 
   return (
     <Card>
@@ -511,26 +562,51 @@ function ExceptionCard({ exception }: { exception: Exception }) {
           <div>
             <p className="text-sm text-slate-600">{exception.reason}</p>
           </div>
-          <div className="flex items-center gap-6 text-sm text-slate-500 pt-2 border-t">
-            <span>
-              Created by {exception.created_by_name} on {new Date(exception.created_at).toLocaleDateString()}
-            </span>
-            {exception.approved_by_name && (
+          <div className="flex items-center justify-between pt-2 border-t">
+            <div className="flex items-center gap-6 text-sm text-slate-500">
               <span>
-                Approved by {exception.approved_by_name}
+                Created by {exception.created_by_name} on {new Date(exception.created_at).toLocaleDateString()}
               </span>
-            )}
-            {exception.expires_at && (
-              <span className="flex items-center gap-1">
-                <Clock className="h-4 w-4" />
-                Expires: {new Date(exception.expires_at).toLocaleDateString()}
-              </span>
-            )}
-            {exception.expiration_type === 'permanent' && (
-              <span className="flex items-center gap-1 text-amber-600">
-                <Lock className="h-4 w-4" />
-                Permanent
-              </span>
+              {exception.approved_by_name && (
+                <span>
+                  Approved by {exception.approved_by_name}
+                </span>
+              )}
+              {exception.expires_at && (
+                <span className="flex items-center gap-1">
+                  <Clock className="h-4 w-4" />
+                  Expires: {new Date(exception.expires_at).toLocaleDateString()}
+                </span>
+              )}
+              {exception.expiration_type === 'permanent' && (
+                <span className="flex items-center gap-1 text-amber-600">
+                  <Lock className="h-4 w-4" />
+                  Permanent
+                </span>
+              )}
+            </div>
+            {canApprove && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handleAction('reject')}
+                  disabled={isProcessing}
+                  className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <XCircle className="h-4 w-4 mr-1" />
+                  Reject
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => handleAction('approve')}
+                  disabled={isProcessing}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <CheckCircle className="h-4 w-4 mr-1" />
+                  Approve
+                </Button>
+              </div>
             )}
           </div>
         </div>

@@ -268,3 +268,122 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+// PUT /api/exceptions - Approve or reject an exception
+export async function PUT(request: NextRequest) {
+  try {
+    const token = request.cookies.get('auth_token')?.value
+
+    if (!token) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
+
+    const user = getUserByToken(token)
+    if (!user) {
+      return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    // Only admin and risk_manager can approve exceptions
+    if (!['admin', 'risk_manager'].includes(user.role)) {
+      return NextResponse.json({ error: 'You do not have permission to approve exceptions' }, { status: 403 })
+    }
+
+    const body = await request.json()
+    const { exceptionId, action } = body
+
+    if (!exceptionId) {
+      return NextResponse.json({ error: 'Exception ID is required' }, { status: 400 })
+    }
+
+    if (!['approve', 'reject'].includes(action)) {
+      return NextResponse.json({ error: 'Action must be approve or reject' }, { status: 400 })
+    }
+
+    const db = getDb()
+
+    // Get exception with company verification
+    const exception = db.prepare(`
+      SELECT e.*, ps.id as project_subcontractor_id, p.company_id
+      FROM exceptions e
+      JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
+      JOIN projects p ON ps.project_id = p.id
+      WHERE e.id = ?
+    `).get(exceptionId) as {
+      id: string
+      status: string
+      project_subcontractor_id: string
+      company_id: string
+    } | undefined
+
+    if (!exception) {
+      return NextResponse.json({ error: 'Exception not found' }, { status: 404 })
+    }
+
+    if (exception.company_id !== user.company_id) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
+    }
+
+    if (exception.status !== 'pending_approval') {
+      return NextResponse.json({ error: 'Exception is not pending approval' }, { status: 400 })
+    }
+
+    const newStatus = action === 'approve' ? 'active' : 'rejected'
+
+    // Update exception status
+    db.prepare(`
+      UPDATE exceptions
+      SET status = ?, approved_by_user_id = ?, approved_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ?
+    `).run(newStatus, user.id, exceptionId)
+
+    // If approved, update project_subcontractor status to 'exception'
+    if (action === 'approve') {
+      db.prepare(`
+        UPDATE project_subcontractors
+        SET status = 'exception', updated_at = datetime('now')
+        WHERE id = ?
+      `).run(exception.project_subcontractor_id)
+    }
+
+    // Log the action
+    db.prepare(`
+      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
+      VALUES (?, ?, ?, 'exception', ?, ?, ?)
+    `).run(
+      uuidv4(),
+      user.company_id,
+      user.id,
+      exceptionId,
+      action,
+      JSON.stringify({ previousStatus: 'pending_approval', newStatus })
+    )
+
+    // Get updated exception
+    const updatedException = db.prepare(`
+      SELECT e.*,
+        ps.subcontractor_id,
+        ps.project_id,
+        s.name as subcontractor_name,
+        p.name as project_name,
+        creator.name as created_by_name,
+        approver.name as approved_by_name
+      FROM exceptions e
+      JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
+      JOIN subcontractors s ON ps.subcontractor_id = s.id
+      JOIN projects p ON ps.project_id = p.id
+      JOIN users creator ON e.created_by_user_id = creator.id
+      LEFT JOIN users approver ON e.approved_by_user_id = approver.id
+      WHERE e.id = ?
+    `).get(exceptionId)
+
+    return NextResponse.json({
+      success: true,
+      message: `Exception ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+      exception: updatedException
+    })
+
+  } catch (error) {
+    console.error('Update exception error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
