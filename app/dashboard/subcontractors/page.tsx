@@ -13,7 +13,12 @@ import {
   X,
   Loader2,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Upload,
+  FileSpreadsheet,
+  ArrowRight,
+  GitMerge,
+  SkipForward
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -82,6 +87,40 @@ export default function SubcontractorsPage() {
     entityType?: string | null
     message?: string
   } | null>(null)
+
+  // CSV Import state
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importStep, setImportStep] = useState<'upload' | 'mapping' | 'preview' | 'duplicates' | 'importing'>('upload')
+  const [csvData, setCsvData] = useState<string[][]>([])
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([])
+  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({})
+  const [importPreview, setImportPreview] = useState<Array<Record<string, string>>>([])
+  const [isImporting, setIsImporting] = useState(false)
+  const [importErrors, setImportErrors] = useState<string[]>([])
+  const [duplicates, setDuplicates] = useState<Array<{
+    rowNum: number
+    importData: Record<string, string>
+    existingId: string
+    existingName: string
+    cleanedABN: string
+  }>>([])
+  const [selectedMergeIds, setSelectedMergeIds] = useState<string[]>([])
+
+  // Field mapping options for CSV import
+  const fieldMappingOptions = [
+    { value: '', label: 'Do not import' },
+    { value: 'name', label: 'Company Name' },
+    { value: 'abn', label: 'ABN' },
+    { value: 'tradingName', label: 'Trading Name' },
+    { value: 'trade', label: 'Trade' },
+    { value: 'address', label: 'Address' },
+    { value: 'contactName', label: 'Contact Name' },
+    { value: 'contactEmail', label: 'Contact Email' },
+    { value: 'contactPhone', label: 'Contact Phone' },
+    { value: 'brokerName', label: 'Broker Name' },
+    { value: 'brokerEmail', label: 'Broker Email' },
+    { value: 'brokerPhone', label: 'Broker Phone' },
+  ]
 
   useEffect(() => {
     fetchUserRole()
@@ -249,6 +288,257 @@ export default function SubcontractorsPage() {
     }
   }
 
+  // CSV Import functions
+  const handleOpenImportModal = () => {
+    setImportStep('upload')
+    setCsvData([])
+    setCsvHeaders([])
+    setColumnMapping({})
+    setImportPreview([])
+    setImportErrors([])
+    setDuplicates([])
+    setSelectedMergeIds([])
+    setShowImportModal(true)
+  }
+
+  const parseCSV = (text: string): string[][] => {
+    const lines = text.split(/\r?\n/).filter(line => line.trim())
+    return lines.map(line => {
+      const result: string[] = []
+      let current = ''
+      let inQuotes = false
+
+      for (let i = 0; i < line.length; i++) {
+        const char = line[i]
+        if (char === '"') {
+          inQuotes = !inQuotes
+        } else if (char === ',' && !inQuotes) {
+          result.push(current.trim())
+          current = ''
+        } else {
+          current += char
+        }
+      }
+      result.push(current.trim())
+      return result
+    })
+  }
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const text = e.target?.result as string
+      const parsed = parseCSV(text)
+
+      if (parsed.length < 2) {
+        toast({
+          title: "Invalid CSV",
+          description: "CSV must have at least a header row and one data row",
+          variant: "destructive"
+        })
+        return
+      }
+
+      const headers = parsed[0]
+      const data = parsed.slice(1)
+
+      setCsvHeaders(headers)
+      setCsvData(data)
+
+      // Auto-map columns based on header names
+      const autoMapping: Record<string, string> = {}
+      headers.forEach((header, index) => {
+        const headerLower = header.toLowerCase().replace(/[^a-z]/g, '')
+        if (headerLower.includes('companyname') || headerLower === 'name') {
+          autoMapping[index.toString()] = 'name'
+        } else if (headerLower === 'abn') {
+          autoMapping[index.toString()] = 'abn'
+        } else if (headerLower.includes('tradingname') || headerLower.includes('trading')) {
+          autoMapping[index.toString()] = 'tradingName'
+        } else if (headerLower === 'trade') {
+          autoMapping[index.toString()] = 'trade'
+        } else if (headerLower === 'address') {
+          autoMapping[index.toString()] = 'address'
+        } else if (headerLower.includes('contactname') || headerLower.includes('contact') && headerLower.includes('name')) {
+          autoMapping[index.toString()] = 'contactName'
+        } else if (headerLower.includes('contactemail') || (headerLower.includes('contact') && headerLower.includes('email'))) {
+          autoMapping[index.toString()] = 'contactEmail'
+        } else if (headerLower.includes('contactphone') || (headerLower.includes('contact') && headerLower.includes('phone'))) {
+          autoMapping[index.toString()] = 'contactPhone'
+        } else if (headerLower.includes('brokername') || (headerLower.includes('broker') && headerLower.includes('name'))) {
+          autoMapping[index.toString()] = 'brokerName'
+        } else if (headerLower.includes('brokeremail') || (headerLower.includes('broker') && headerLower.includes('email'))) {
+          autoMapping[index.toString()] = 'brokerEmail'
+        } else if (headerLower.includes('brokerphone') || (headerLower.includes('broker') && headerLower.includes('phone'))) {
+          autoMapping[index.toString()] = 'brokerPhone'
+        }
+      })
+
+      setColumnMapping(autoMapping)
+      setImportStep('mapping')
+    }
+    reader.readAsText(file)
+  }
+
+  const handleMappingChange = (columnIndex: string, field: string) => {
+    setColumnMapping(prev => {
+      const newMapping = { ...prev }
+      // Remove previous mapping for this field
+      Object.keys(newMapping).forEach(key => {
+        if (newMapping[key] === field && key !== columnIndex) {
+          delete newMapping[key]
+        }
+      })
+      if (field) {
+        newMapping[columnIndex] = field
+      } else {
+        delete newMapping[columnIndex]
+      }
+      return newMapping
+    })
+  }
+
+  const generatePreview = () => {
+    // Check required fields are mapped
+    const mappedFields = Object.values(columnMapping)
+    if (!mappedFields.includes('name')) {
+      toast({
+        title: "Mapping Required",
+        description: "Company Name is required - please map a column to it",
+        variant: "destructive"
+      })
+      return
+    }
+    if (!mappedFields.includes('abn')) {
+      toast({
+        title: "Mapping Required",
+        description: "ABN is required - please map a column to it",
+        variant: "destructive"
+      })
+      return
+    }
+
+    // Generate preview data
+    const preview = csvData.map(row => {
+      const record: Record<string, string> = {}
+      Object.entries(columnMapping).forEach(([colIndex, field]) => {
+        record[field] = row[parseInt(colIndex)] || ''
+      })
+      return record
+    })
+
+    setImportPreview(preview)
+    setImportStep('preview')
+  }
+
+  const handleBulkImport = async (mergeIds?: string[]) => {
+    setIsImporting(true)
+    setImportErrors([])
+
+    try {
+      const response = await fetch('/api/subcontractors/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subcontractors: importPreview,
+          mergeIds: mergeIds || selectedMergeIds
+        })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Import failed')
+      }
+
+      // If there are duplicates and we haven't shown them yet, show duplicates step
+      if (data.duplicates && data.duplicates.length > 0 && importStep !== 'duplicates') {
+        setDuplicates(data.duplicates)
+        setImportStep('duplicates')
+
+        // Show partial success message
+        if (data.created > 0) {
+          toast({
+            title: "Partial Import",
+            description: `Imported ${data.created} new subcontractors. ${data.duplicates.length} duplicate(s) found.`
+          })
+        } else {
+          toast({
+            title: "Duplicates Found",
+            description: `${data.duplicates.length} subcontractor(s) already exist. Choose to merge or skip.`
+          })
+        }
+
+        if (data.errors && data.errors.length > 0) {
+          setImportErrors(data.errors)
+        }
+        return
+      }
+
+      // Build success message
+      let message = ''
+      if (data.created > 0) {
+        message += `${data.created} created`
+      }
+      if (data.merged > 0) {
+        message += `${message ? ', ' : ''}${data.merged} merged`
+      }
+      if (data.errors?.length > 0) {
+        message += `${message ? ', ' : ''}${data.errors.length} failed`
+      }
+
+      toast({
+        title: "Import Complete",
+        description: `Successfully processed: ${message || 'No changes'}`
+      })
+
+      if (data.errors && data.errors.length > 0) {
+        setImportErrors(data.errors)
+      } else {
+        setShowImportModal(false)
+        fetchSubcontractors()
+      }
+    } catch (error) {
+      toast({
+        title: "Import Failed",
+        description: error instanceof Error ? error.message : 'Failed to import subcontractors',
+        variant: "destructive"
+      })
+    } finally {
+      setIsImporting(false)
+    }
+  }
+
+  const handleMergeSelection = (existingId: string, selected: boolean) => {
+    setSelectedMergeIds(prev =>
+      selected
+        ? [...prev, existingId]
+        : prev.filter(id => id !== existingId)
+    )
+  }
+
+  const handleMergeAll = () => {
+    setSelectedMergeIds(duplicates.map(d => d.existingId))
+  }
+
+  const handleSkipAll = () => {
+    setSelectedMergeIds([])
+  }
+
+  const handleConfirmMerge = async () => {
+    // Re-run import with selected merge IDs
+    await handleBulkImport(selectedMergeIds)
+
+    // If successful and no more duplicates, close modal
+    if (importStep !== 'duplicates') {
+      setShowImportModal(false)
+      fetchSubcontractors()
+    }
+  }
+
   const handleAddSubcontractor = async () => {
     if (!formData.name.trim()) {
       toast({
@@ -340,10 +630,16 @@ export default function SubcontractorsPage() {
             <p className="text-slate-500">Manage your subcontractor database</p>
           </div>
           {canAddSubcontractors && (
-            <Button onClick={handleOpenAddModal}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Subcontractor
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleOpenImportModal}>
+                <Upload className="h-4 w-4 mr-2" />
+                Import CSV
+              </Button>
+              <Button onClick={handleOpenAddModal}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add Subcontractor
+              </Button>
+            </div>
           )}
         </div>
       </header>
@@ -692,6 +988,318 @@ export default function SubcontractorsPage() {
                 'Add Subcontractor'
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* CSV Import Modal */}
+      <Dialog open={showImportModal} onOpenChange={setShowImportModal}>
+        <DialogContent onClose={() => setShowImportModal(false)} className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5 text-primary" />
+              Import Subcontractors from CSV
+            </DialogTitle>
+            <DialogDescription>
+              {importStep === 'upload' && 'Upload a CSV file with your subcontractor data'}
+              {importStep === 'mapping' && 'Map CSV columns to subcontractor fields'}
+              {importStep === 'preview' && `Preview ${importPreview.length} records to import`}
+              {importStep === 'duplicates' && `${duplicates.length} duplicate(s) found - choose to merge or skip`}
+              {importStep === 'importing' && 'Importing subcontractors...'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Step indicator */}
+          <div className="flex items-center justify-center gap-2 py-4">
+            <div className={`flex items-center gap-1 ${importStep === 'upload' ? 'text-primary font-medium' : 'text-slate-400'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${importStep === 'upload' ? 'bg-primary text-white' : 'bg-slate-200'}`}>1</div>
+              Upload
+            </div>
+            <ArrowRight className="h-4 w-4 text-slate-300" />
+            <div className={`flex items-center gap-1 ${importStep === 'mapping' ? 'text-primary font-medium' : 'text-slate-400'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${importStep === 'mapping' ? 'bg-primary text-white' : 'bg-slate-200'}`}>2</div>
+              Map
+            </div>
+            <ArrowRight className="h-4 w-4 text-slate-300" />
+            <div className={`flex items-center gap-1 ${importStep === 'preview' || importStep === 'importing' ? 'text-primary font-medium' : 'text-slate-400'}`}>
+              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${importStep === 'preview' || importStep === 'importing' ? 'bg-primary text-white' : 'bg-slate-200'}`}>3</div>
+              Import
+            </div>
+            {importStep === 'duplicates' && (
+              <>
+                <ArrowRight className="h-4 w-4 text-slate-300" />
+                <div className="flex items-center gap-1 text-primary font-medium">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs bg-amber-500 text-white">!</div>
+                  Duplicates
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Upload Step */}
+          {importStep === 'upload' && (
+            <div className="space-y-4">
+              <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 text-center">
+                <Upload className="h-10 w-10 mx-auto text-slate-400 mb-4" />
+                <p className="text-slate-600 mb-2">Drag and drop a CSV file, or click to browse</p>
+                <p className="text-sm text-slate-400 mb-4">Supports .csv files</p>
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  id="csv-upload"
+                />
+                <Button asChild variant="outline">
+                  <label htmlFor="csv-upload" className="cursor-pointer">
+                    Select CSV File
+                  </label>
+                </Button>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4">
+                <h4 className="font-medium text-sm mb-2">Expected CSV Format</h4>
+                <p className="text-xs text-slate-500 mb-2">
+                  Your CSV should have a header row with column names. Required columns: Name, ABN
+                </p>
+                <code className="text-xs bg-slate-200 px-2 py-1 rounded block">
+                  Company Name,ABN,Trading Name,Trade,Address,Contact Name,Contact Email,Contact Phone
+                </code>
+              </div>
+            </div>
+          )}
+
+          {/* Mapping Step */}
+          {importStep === 'mapping' && (
+            <div className="space-y-4">
+              <div className="bg-slate-50 rounded-lg p-4">
+                <p className="text-sm text-slate-600">
+                  Found <span className="font-medium">{csvData.length}</span> records in your CSV.
+                  Map each column to the appropriate field.
+                </p>
+              </div>
+              <div className="space-y-3 max-h-64 overflow-y-auto">
+                {csvHeaders.map((header, index) => (
+                  <div key={index} className="flex items-center gap-4">
+                    <div className="w-1/3 text-sm font-medium text-slate-700 truncate" title={header}>
+                      {header}
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                    <select
+                      className="flex-1 border rounded-md px-3 py-2 text-sm"
+                      value={columnMapping[index.toString()] || ''}
+                      onChange={(e) => handleMappingChange(index.toString(), e.target.value)}
+                    >
+                      {fieldMappingOptions.map(option => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <AlertCircle className="h-4 w-4" />
+                Company Name and ABN are required fields
+              </div>
+            </div>
+          )}
+
+          {/* Preview Step */}
+          {importStep === 'preview' && (
+            <div className="space-y-4">
+              {importErrors.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <h4 className="font-medium text-red-800 mb-2">Import Errors</h4>
+                  <ul className="text-sm text-red-600 list-disc pl-4">
+                    {importErrors.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="border rounded-lg overflow-hidden">
+                <div className="overflow-x-auto max-h-64">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">#</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Company Name</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">ABN</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Trade</th>
+                        <th className="px-3 py-2 text-left font-medium text-slate-600">Contact</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importPreview.map((record, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="px-3 py-2 text-slate-500">{i + 1}</td>
+                          <td className="px-3 py-2 font-medium">{record.name || '-'}</td>
+                          <td className="px-3 py-2 font-mono text-xs">{record.abn || '-'}</td>
+                          <td className="px-3 py-2">{record.trade || '-'}</td>
+                          <td className="px-3 py-2">{record.contactName || record.contactEmail || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <p className="text-sm text-slate-500">
+                Ready to import {importPreview.length} subcontractors
+              </p>
+            </div>
+          )}
+
+          {/* Duplicates Step */}
+          {importStep === 'duplicates' && (
+            <div className="space-y-4">
+              {importErrors.length > 0 && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <h4 className="font-medium text-red-800 mb-2">Import Errors</h4>
+                  <ul className="text-sm text-red-600 list-disc pl-4 max-h-24 overflow-y-auto">
+                    {importErrors.map((error, i) => (
+                      <li key={i}>{error}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="h-5 w-5 text-amber-600 mt-0.5" />
+                  <div>
+                    <h4 className="font-medium text-amber-800">Duplicate ABNs Detected</h4>
+                    <p className="text-sm text-amber-700 mt-1">
+                      The following subcontractors already exist in your database.
+                      Select which ones to merge (update with new data) or skip.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 text-sm">
+                <Button variant="outline" size="sm" onClick={handleMergeAll}>
+                  <GitMerge className="h-3 w-3 mr-1" />
+                  Select All to Merge
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleSkipAll}>
+                  <SkipForward className="h-3 w-3 mr-1" />
+                  Skip All
+                </Button>
+              </div>
+
+              <div className="border rounded-lg divide-y max-h-64 overflow-y-auto">
+                {duplicates.map((dup) => (
+                  <div key={dup.existingId} className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            id={`merge-${dup.existingId}`}
+                            checked={selectedMergeIds.includes(dup.existingId)}
+                            onChange={(e) => handleMergeSelection(dup.existingId, e.target.checked)}
+                            className="w-4 h-4 rounded border-gray-300"
+                          />
+                          <label htmlFor={`merge-${dup.existingId}`} className="font-medium text-sm cursor-pointer">
+                            Row {dup.rowNum}: {dup.importData.name}
+                          </label>
+                        </div>
+                        <div className="mt-2 ml-6 text-xs text-slate-500 space-y-1">
+                          <p>
+                            <span className="font-medium">ABN:</span> {dup.cleanedABN}
+                          </p>
+                          <p>
+                            <span className="font-medium">Existing Name:</span> {dup.existingName}
+                          </p>
+                          {dup.importData.trade && (
+                            <p>
+                              <span className="font-medium">New Trade:</span> {dup.importData.trade}
+                            </p>
+                          )}
+                          {dup.importData.contactEmail && (
+                            <p>
+                              <span className="font-medium">New Contact:</span> {dup.importData.contactEmail}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        selectedMergeIds.includes(dup.existingId)
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {selectedMergeIds.includes(dup.existingId) ? 'Will Merge' : 'Will Skip'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <p className="text-sm text-slate-500">
+                {selectedMergeIds.length} of {duplicates.length} selected to merge
+              </p>
+            </div>
+          )}
+
+          <DialogFooter className="mt-6">
+            {importStep === 'upload' && (
+              <Button variant="outline" onClick={() => setShowImportModal(false)}>
+                Cancel
+              </Button>
+            )}
+            {importStep === 'mapping' && (
+              <>
+                <Button variant="outline" onClick={() => setImportStep('upload')}>
+                  Back
+                </Button>
+                <Button onClick={generatePreview}>
+                  Preview Import
+                </Button>
+              </>
+            )}
+            {importStep === 'preview' && (
+              <>
+                <Button variant="outline" onClick={() => setImportStep('mapping')}>
+                  Back
+                </Button>
+                <Button onClick={() => handleBulkImport()} disabled={isImporting}>
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    `Import ${importPreview.length} Subcontractors`
+                  )}
+                </Button>
+              </>
+            )}
+            {importStep === 'duplicates' && (
+              <>
+                <Button variant="outline" onClick={() => {
+                  setShowImportModal(false)
+                  fetchSubcontractors()
+                }}>
+                  Done (Skip Remaining)
+                </Button>
+                <Button onClick={handleConfirmMerge} disabled={isImporting}>
+                  {isImporting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Processing...
+                    </>
+                  ) : selectedMergeIds.length > 0 ? (
+                    <>
+                      <GitMerge className="h-4 w-4 mr-2" />
+                      Merge {selectedMergeIds.length} Selected
+                    </>
+                  ) : (
+                    'Finish (Skip All)'
+                  )}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

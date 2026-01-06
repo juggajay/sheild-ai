@@ -66,6 +66,9 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
   const isLowConfidence = fileName.toLowerCase().includes('poor_quality') ||
                            fileName.toLowerCase().includes('low_confidence') ||
                            fileName.toLowerCase().includes('blurry')
+  const isFullCompliance = fileName.toLowerCase().includes('compliant') ||
+                           fileName.toLowerCase().includes('full_compliance') ||
+                           fileName.toLowerCase().includes('pass')
 
   // Generate dates - policy typically valid for 1 year
   const now = new Date()
@@ -81,11 +84,11 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
     endDate.setFullYear(endDate.getFullYear() + 1) // 1 year policy
   }
 
-  // Generate coverage limits
-  const publicLiabilityLimit = [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
-  const productsLiabilityLimit = [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
-  const workersCompLimit = [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
-  const professionalIndemnityLimit = [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
+  // Generate coverage limits - force high values for full compliance scenarios
+  const publicLiabilityLimit = isFullCompliance ? 20000000 : [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
+  const productsLiabilityLimit = isFullCompliance ? 20000000 : [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
+  const workersCompLimit = isFullCompliance ? 2000000 : [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
+  const professionalIndemnityLimit = isFullCompliance ? 5000000 : [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
 
   const extractedData = {
     // Insured party details
@@ -623,6 +626,73 @@ RiskShield AI Compliance Team`
           subcontractor_name: subcontractor.name,
           project_name: projectName,
           deficiency_count: verification.deficiencies.length
+        }))
+      }
+    }
+
+    // If verification passed, send confirmation email
+    if (verification.status === 'pass') {
+      // Get project name for email
+      const projectDetails = db.prepare('SELECT name FROM projects WHERE id = ?')
+        .get(document.project_id) as { name: string } | undefined
+      const projectName = projectDetails?.name || 'Unknown Project'
+
+      // Determine recipient (prefer broker, fall back to subcontractor contact)
+      const recipientEmail = subcontractor.broker_email || subcontractor.contact_email
+      const recipientName = subcontractor.broker_name || subcontractor.contact_name || 'Insurance Contact'
+
+      if (recipientEmail) {
+        // Create confirmation email subject and body
+        const emailSubject = `Insurance Compliance Confirmed - ${subcontractor.name} / ${projectName}`
+        const emailBody = `Dear ${recipientName},
+
+Great news! The Certificate of Currency submitted for ${subcontractor.name} (ABN: ${subcontractor.abn}) has been verified and meets all requirements for the ${projectName} project.
+
+VERIFICATION RESULT: APPROVED
+
+${subcontractor.name} is now approved to work on the ${projectName} project. All insurance coverage requirements have been met.
+
+Thank you for ensuring compliance with our insurance requirements. If you have any questions or need to update your certificate in the future, please don't hesitate to contact us.
+
+Best regards,
+RiskShield AI Compliance Team`
+
+        // Get or create verification ID for linking
+        let verificationId = document.verification_id
+        if (!verificationId) {
+          const newVerification = db.prepare('SELECT id FROM verifications WHERE coc_document_id = ?')
+            .get(params.id) as { id: string } | undefined
+          verificationId = newVerification?.id || null
+        }
+
+        // Queue the confirmation email
+        const communicationId = uuidv4()
+        db.prepare(`
+          INSERT INTO communications (id, subcontractor_id, project_id, verification_id, type, channel, recipient_email, subject, body, status)
+          VALUES (?, ?, ?, ?, 'confirmation', 'email', ?, ?, ?, 'sent')
+        `).run(
+          communicationId,
+          document.subcontractor_id,
+          document.project_id,
+          verificationId,
+          recipientEmail,
+          emailSubject,
+          emailBody
+        )
+
+        // Mark as sent
+        db.prepare(`
+          UPDATE communications SET sent_at = datetime('now'), status = 'sent' WHERE id = ?
+        `).run(communicationId)
+
+        // Log the email action
+        db.prepare(`
+          INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
+          VALUES (?, ?, ?, 'communication', ?, 'confirmation_email_sent', ?)
+        `).run(uuidv4(), user.company_id, user.id, communicationId, JSON.stringify({
+          recipient: recipientEmail,
+          subcontractor_name: subcontractor.name,
+          project_name: projectName
         }))
       }
     }
