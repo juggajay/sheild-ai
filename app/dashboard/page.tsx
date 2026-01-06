@@ -15,11 +15,23 @@ import {
   FileWarning,
   ShieldAlert,
   Mail,
-  RefreshCw
+  RefreshCw,
+  TrendingUp
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Area,
+  AreaChart
+} from 'recharts'
 
 interface User {
   id: string
@@ -97,14 +109,36 @@ interface MorningBriefData {
   pendingResponses: PendingResponse[]
 }
 
+interface ComplianceHistoryPoint {
+  date: string
+  total: number
+  compliant: number
+  nonCompliant: number
+  pending: number
+  exception: number
+  complianceRate: number
+}
+
+interface ComplianceHistoryData {
+  history: ComplianceHistoryPoint[]
+  days: number
+  generated: boolean
+}
+
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null)
   const [morningBrief, setMorningBrief] = useState<MorningBriefData | null>(null)
+  const [complianceHistory, setComplianceHistory] = useState<ComplianceHistoryData | null>(null)
+  const [historyDays, setHistoryDays] = useState(30)
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     fetchData()
   }, [])
+
+  useEffect(() => {
+    fetchComplianceHistory()
+  }, [historyDays])
 
   const fetchData = async () => {
     try {
@@ -126,6 +160,18 @@ export default function DashboardPage() {
       console.error("Failed to fetch data:", error)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const fetchComplianceHistory = async () => {
+    try {
+      const res = await fetch(`/api/compliance-history?days=${historyDays}`)
+      if (res.ok) {
+        const data = await res.json()
+        setComplianceHistory(data)
+      }
+    } catch (error) {
+      console.error("Failed to fetch compliance history:", error)
     }
   }
 
@@ -185,6 +231,111 @@ export default function DashboardPage() {
             highlight={stats?.stopWorkCount ? stats.stopWorkCount > 0 : false}
           />
         </div>
+
+        {/* Compliance Trend Chart */}
+        {stats && stats.total > 0 && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <TrendingUp className="h-5 w-5 text-primary" />
+                    Compliance Trend
+                  </CardTitle>
+                  <CardDescription>Portfolio compliance rate over time</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={historyDays === 7 ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setHistoryDays(7)}
+                  >
+                    7D
+                  </Button>
+                  <Button
+                    variant={historyDays === 30 ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setHistoryDays(30)}
+                  >
+                    30D
+                  </Button>
+                  <Button
+                    variant={historyDays === 90 ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setHistoryDays(90)}
+                  >
+                    90D
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {complianceHistory && complianceHistory.history.length > 0 ? (
+                <div className="h-[300px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={complianceHistory.history}>
+                      <defs>
+                        <linearGradient id="colorCompliance" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3}/>
+                          <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-slate-200" />
+                      <XAxis
+                        dataKey="date"
+                        tickFormatter={(value) => {
+                          const date = new Date(value)
+                          return `${date.getMonth() + 1}/${date.getDate()}`
+                        }}
+                        className="text-xs"
+                      />
+                      <YAxis
+                        domain={[0, 100]}
+                        tickFormatter={(value) => `${value}%`}
+                        className="text-xs"
+                      />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (active && payload && payload.length) {
+                            const data = payload[0].payload as ComplianceHistoryPoint
+                            return (
+                              <div className="bg-white p-3 rounded-lg shadow-lg border">
+                                <p className="font-medium">{new Date(label).toLocaleDateString()}</p>
+                                <p className="text-green-600">Compliance: {data.complianceRate}%</p>
+                                <div className="text-xs text-slate-500 mt-1 space-y-0.5">
+                                  <p>Compliant: {data.compliant}</p>
+                                  <p>With Exception: {data.exception}</p>
+                                  <p>Non-Compliant: {data.nonCompliant}</p>
+                                  <p>Pending: {data.pending}</p>
+                                </div>
+                              </div>
+                            )
+                          }
+                          return null
+                        }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="complianceRate"
+                        stroke="#22c55e"
+                        strokeWidth={2}
+                        fill="url(#colorCompliance)"
+                        name="Compliance Rate"
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <div className="h-[300px] flex items-center justify-center text-slate-500">
+                  <div className="text-center">
+                    <TrendingUp className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                    <p>Loading trend data...</p>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Quick Start Guide - only show if no projects */}
         {(!stats || stats.activeProjects === 0) && (

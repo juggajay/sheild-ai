@@ -259,6 +259,23 @@ function initializeSchema(db: Database.Database) {
     )
   `)
 
+  // Compliance snapshots table for trend tracking
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS compliance_snapshots (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      snapshot_date TEXT NOT NULL,
+      total_subcontractors INTEGER DEFAULT 0,
+      compliant INTEGER DEFAULT 0,
+      non_compliant INTEGER DEFAULT 0,
+      pending INTEGER DEFAULT 0,
+      exception INTEGER DEFAULT 0,
+      compliance_rate REAL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(company_id, snapshot_date)
+    )
+  `)
+
   // Password reset tokens table
   db.exec(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
