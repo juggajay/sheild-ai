@@ -984,3 +984,55 @@ Date: 2026-01-07
 - Test user: regression_test_jan7@example.com / TestPass123!
 - All icon-only buttons now have proper ARIA labels for accessibility
 - Use feature_get_next to get the next feature to implement
+
+---
+
+## Session 15 Summary (Coding Agent)
+Date: 2026-01-07
+
+### Completed Features
+
+1. **Feature #204: End-to-end portal upload flow** ✅
+   - Tested the complete subcontractor self-service portal flow
+   - Steps verified:
+     1. **Send portal invite**: Updated subcontractor EXPORT_TEST_SUB_001 with contact email portal_test_jan7@example.com
+     2. **Accept as subcontractor**: Magic link generated and logged to console, verified magic link URL works
+     3. **Log into portal**: Portal dashboard loaded with correct user info and builder relationships
+     4. **Upload COC**: Selected builder "Regression Test Co", selected project "E2E_FULL_FLOW_TEST_JAN7", uploaded test certificate
+     5. **See verification result**: "Certificate Approved!" screen displayed with extracted data (QBE Insurance, policy details, coverages)
+     6. **Verify status updates in main app**: Project page now shows 100% compliant, subcontractor status changed from Pending to Compliant
+   - Screenshots captured:
+     - portal_dashboard.png - Portal dashboard with builder relationships
+     - portal_upload_success.png - Certificate approved celebration screen
+     - main_app_status_updated.png - Project showing 100% compliance
+
+### Portal Flow Implementation Notes
+
+The portal system includes:
+- **Magic link authentication**: Passwordless login via email magic links (15-minute expiry)
+- **Portal dashboard**: Shows builder relationships, compliance status, outstanding requests
+- **COC upload**: Select builder/project, drag-drop file upload, instant verification
+- **Verification**: Simulated AI extraction with coverage checking against project requirements
+- **Status sync**: Successful uploads automatically update project_subcontractor status to "compliant"
+- **Exception auto-resolution**: Active exceptions are auto-resolved when compliant COC uploaded
+
+### Key API Endpoints Used
+
+- POST /api/portal/auth/magic-link - Generate magic link
+- GET/POST /api/portal/auth/verify - Validate and use magic link
+- GET /api/portal/builders - Get builder relationships for portal user
+- POST /api/portal/upload - Upload and verify COC from portal
+
+### Feature Statistics
+- Total Features: 222
+- Passing: 190
+- In Progress: 0
+- Percentage Complete: 85.6%
+
+### Notes for Next Agent
+- Dev server runs on port 3000
+- Test user (main app): regression_test_jan7@example.com / TestPass123!
+- Portal test user: portal_test_jan7@example.com (subcontractor role, passwordless login)
+- Portal flow is fully functional
+- Next feature: #205 - Communication follow-up sequence (automated email follow-ups)
+- This feature involves time-based automation - may need mechanism to trigger scheduled jobs
