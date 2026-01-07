@@ -323,7 +323,7 @@ export async function GET(
     const safeIssueSummary = exception.issue_summary.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30)
 
     // Return PDF
-    return new NextResponse(pdfBytes, {
+    return new NextResponse(Buffer.from(pdfBytes), {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',

@@ -80,7 +80,9 @@ export async function GET(request: NextRequest) {
     const db = getDb()
 
     // Check and update any expired exceptions for this company
-    checkExpiredExceptions(user.company_id)
+    if (user.company_id) {
+      checkExpiredExceptions(user.company_id)
+    }
 
     // Get exceptions based on user role
     let exceptions

@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
     const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19]
     const digits = cleanedABN.split('').map(Number)
     digits[0] = digits[0] - 1 // Subtract 1 from first digit
-    const sum = digits.reduce((acc, digit, i) => acc + digit * weights[i], 0)
+    const sum = digits.reduce((acc: number, digit: number, i: number) => acc + digit * weights[i], 0)
     if (sum % 89 !== 0) {
       return NextResponse.json({ error: 'Invalid ABN checksum - please verify the ABN is correct' }, { status: 400 })
     }

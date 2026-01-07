@@ -62,14 +62,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Parse deficiencies for the email
-    let deficiencies: Array<{ check_name: string; message: string }> = []
+    let rawDeficiencies: Array<{ check_name?: string; message?: string; type?: string; description?: string }> = []
     try {
-      deficiencies = JSON.parse(verification.deficiencies || '[]')
+      rawDeficiencies = JSON.parse(verification.deficiencies || '[]')
     } catch {
-      deficiencies = []
+      rawDeficiencies = []
     }
 
-    const deficiencyList = deficiencies.map(d => `- ${d.check_name}: ${d.message}`).join('\n')
+    // Transform deficiencies to match expected type for sendFollowUpEmail
+    const deficiencies = rawDeficiencies.map(d => ({
+      type: d.type,
+      description: d.description || d.message || 'Issue with certificate',
+      check_name: d.check_name,
+      message: d.message
+    }))
+
+    const deficiencyList = rawDeficiencies.map(d => `- ${d.check_name || d.type || 'Issue'}: ${d.message || d.description || 'See details'}`).join('\n')
 
     // Create a follow-up communication record
     const communicationId = uuidv4()

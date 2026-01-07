@@ -827,8 +827,8 @@ export async function POST(request: NextRequest) {
         period_of_insurance_start: extractedData.period_of_insurance_start,
         period_of_insurance_end: extractedData.period_of_insurance_end,
         coverages: extractedData.coverages.map(c => ({
-          type: c.coverage_type,
-          limit: c.coverage_limit
+          type: c.type,
+          limit: c.limit
         }))
       },
       file.name

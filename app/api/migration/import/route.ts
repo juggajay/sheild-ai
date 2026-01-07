@@ -127,15 +127,15 @@ export async function POST(request: NextRequest) {
       }
 
       // Add newly created subcontractors
-      for (const [key, subId] of newSubcontractorMap) {
+      newSubcontractorMap.forEach((subId, key) => {
         completeMapping.set(key, subId)
-      }
+      })
 
       // 3. Assign subcontractors to project if not already assigned
       const assignedSubIds = new Set<string>()
 
-      for (const subId of completeMapping.values()) {
-        if (assignedSubIds.has(subId)) continue
+      completeMapping.forEach((subId) => {
+        if (assignedSubIds.has(subId)) return
         assignedSubIds.add(subId)
 
         // Check if already assigned
@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
             console.error(`[MIGRATION] ${msg}`)
           }
         }
-      }
+      })
 
       // 4. Import COC documents if requested
       if (importCOCs !== false) {

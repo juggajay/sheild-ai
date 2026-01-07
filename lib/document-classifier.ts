@@ -347,9 +347,9 @@ export function matchVendorToSubcontractor(
     const vendorWords = new Set(vendorNameLower.split(/\s+/))
     const subWords = new Set(subNameLower.split(/\s+/))
     let overlap = 0
-    for (const word of vendorWords) {
+    vendorWords.forEach((word) => {
       if (subWords.has(word)) overlap++
-    }
+    })
 
     if (overlap > 0) {
       const conf = 0.50 + (overlap / Math.max(vendorWords.size, subWords.size)) * 0.35

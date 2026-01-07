@@ -1,11 +1,12 @@
 "use client"
 
+import { Suspense } from "react"
 import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Shield, Loader2, AlertCircle } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
-export default function BrokerVerifyPage() {
+function BrokerVerifyContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { toast } = useToast()
@@ -80,5 +81,20 @@ export default function BrokerVerifyPage() {
         <p className="text-slate-600">Signing you in...</p>
       </div>
     </div>
+  )
+}
+
+export default function BrokerVerifyPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 mx-auto mb-4 text-primary animate-spin" />
+          <p className="text-slate-600">Loading...</p>
+        </div>
+      </div>
+    }>
+      <BrokerVerifyContent />
+    </Suspense>
   )
 }
