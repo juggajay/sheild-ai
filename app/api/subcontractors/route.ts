@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '@/lib/db'
 import { getUserByToken } from '@/lib/auth'
+import { parsePaginationParams, createPaginatedResponse } from '@/lib/pagination'
 
 // GET /api/subcontractors - List all subcontractors for the company
 export async function GET(request: NextRequest) {
@@ -18,8 +19,17 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDb()
+    const { searchParams } = new URL(request.url)
+    const { page, limit, offset } = parsePaginationParams(searchParams)
 
-    // Get all subcontractors for the company (only count active project assignments)
+    // Get total count first
+    const countResult = db.prepare(`
+      SELECT COUNT(*) as total FROM subcontractors s
+      WHERE s.company_id = ?
+    `).get(user.company_id) as { total: number }
+    const total = countResult.total
+
+    // Get paginated subcontractors for the company (only count active project assignments)
     const subcontractors = db.prepare(`
       SELECT s.*,
         (SELECT COUNT(*) FROM project_subcontractors ps
@@ -28,11 +38,15 @@ export async function GET(request: NextRequest) {
       FROM subcontractors s
       WHERE s.company_id = ?
       ORDER BY s.name ASC
-    `).all(user.company_id)
+      LIMIT ? OFFSET ?
+    `).all(user.company_id, limit, offset)
 
+    // Return both old format for backward compatibility and new paginated format
+    const paginatedResponse = createPaginatedResponse(subcontractors, total, { page, limit, offset })
     return NextResponse.json({
-      subcontractors,
-      total: subcontractors.length
+      subcontractors,  // Backward compatibility
+      total,           // Backward compatibility (was subcontractors.length before)
+      ...paginatedResponse  // New pagination structure
     })
   } catch (error) {
     console.error('Get subcontractors error:', error)

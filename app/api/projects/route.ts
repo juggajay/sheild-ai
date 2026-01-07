@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '@/lib/db'
 import { getUserByToken } from '@/lib/auth'
+import { parsePaginationParams, createPaginatedResponse } from '@/lib/pagination'
 
 // GET /api/projects - List projects (filtered by role)
 export async function GET(request: NextRequest) {
@@ -27,12 +28,23 @@ export async function GET(request: NextRequest) {
     // Check if archived/completed projects should be included
     const { searchParams } = new URL(request.url)
     const includeArchived = searchParams.get('includeArchived') === 'true'
+    const { page, limit, offset } = parsePaginationParams(searchParams)
 
     let projects
+    let total: number
+
     if (['admin', 'risk_manager', 'read_only'].includes(user.role)) {
       // Full access to all company projects
       // By default, exclude completed/archived projects
       const statusFilter = includeArchived ? '' : "AND p.status != 'completed'"
+
+      // Get total count first
+      const countResult = db.prepare(`
+        SELECT COUNT(*) as total FROM projects p
+        WHERE p.company_id = ? ${statusFilter}
+      `).get(user.company_id) as { total: number }
+      total = countResult.total
+
       projects = db.prepare(`
         SELECT
           p.*,
@@ -43,11 +55,20 @@ export async function GET(request: NextRequest) {
         LEFT JOIN users u ON p.project_manager_id = u.id
         WHERE p.company_id = ? ${statusFilter}
         ORDER BY p.created_at DESC
-      `).all(user.company_id)
+        LIMIT ? OFFSET ?
+      `).all(user.company_id, limit, offset)
     } else {
       // Project manager and project administrator: only assigned projects
       // By default, exclude completed/archived projects
       const statusFilter = includeArchived ? '' : "AND p.status != 'completed'"
+
+      // Get total count first
+      const countResult = db.prepare(`
+        SELECT COUNT(*) as total FROM projects p
+        WHERE p.company_id = ? AND p.project_manager_id = ? ${statusFilter}
+      `).get(user.company_id, user.id) as { total: number }
+      total = countResult.total
+
       projects = db.prepare(`
         SELECT
           p.*,
@@ -58,10 +79,17 @@ export async function GET(request: NextRequest) {
         LEFT JOIN users u ON p.project_manager_id = u.id
         WHERE p.company_id = ? AND p.project_manager_id = ? ${statusFilter}
         ORDER BY p.created_at DESC
-      `).all(user.company_id, user.id)
+        LIMIT ? OFFSET ?
+      `).all(user.company_id, user.id, limit, offset)
     }
 
-    return NextResponse.json({ projects })
+    // Return both old format (projects array) for backward compatibility
+    // and new paginated format
+    const paginatedResponse = createPaginatedResponse(projects, total, { page, limit, offset })
+    return NextResponse.json({
+      projects,  // Backward compatibility
+      ...paginatedResponse  // New pagination structure
+    })
   } catch (error) {
     console.error('Get projects error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
