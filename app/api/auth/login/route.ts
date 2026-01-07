@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb, type User } from '@/lib/db'
 import { verifyPassword, createSession } from '@/lib/auth'
+import { authLimiter, rateLimitResponse } from '@/lib/rate-limit'
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = authLimiter.check(request, 'login')
+  if (!rateLimitResult.success) {
+    return rateLimitResponse(rateLimitResult)
+  }
+
   try {
     const body = await request.json()
     const { email, password } = body

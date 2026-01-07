@@ -1,9 +1,16 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import { createPasswordResetToken, getUserByEmail } from '@/lib/auth'
 import { sendPasswordResetEmail, isSendGridConfigured } from '@/lib/sendgrid'
+import { authLimiter, rateLimitResponse } from '@/lib/rate-limit'
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = authLimiter.check(request, 'forgot-password')
+  if (!rateLimitResult.success) {
+    return rateLimitResponse(rateLimitResult)
+  }
+
   try {
     const { email } = await request.json()
 

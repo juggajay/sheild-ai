@@ -3,8 +3,15 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '@/lib/db'
 import { hashPassword, validatePassword, createSession } from '@/lib/auth'
 import { isValidABN } from '@/lib/utils'
+import { authLimiter, rateLimitResponse } from '@/lib/rate-limit'
 
 export async function POST(request: NextRequest) {
+  // Rate limiting check
+  const rateLimitResult = authLimiter.check(request, 'signup')
+  if (!rateLimitResult.success) {
+    return rateLimitResponse(rateLimitResult)
+  }
+
   try {
     const body = await request.json()
     const { email, password, name, companyName, abn } = body
