@@ -296,8 +296,8 @@ export default function ExpirationsCalendarPage() {
               {monthNames[currentMonth.getMonth()]} {currentMonth.getFullYear()}
             </CardTitle>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={handlePrevMonth}>
-                <ChevronLeft className="h-4 w-4" />
+              <Button variant="outline" size="icon" onClick={handlePrevMonth} aria-label="Previous month">
+                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
               </Button>
               <Button
                 variant="outline"
@@ -306,8 +306,8 @@ export default function ExpirationsCalendarPage() {
               >
                 Today
               </Button>
-              <Button variant="outline" size="icon" onClick={handleNextMonth}>
-                <ChevronRight className="h-4 w-4" />
+              <Button variant="outline" size="icon" onClick={handleNextMonth} aria-label="Next month">
+                <ChevronRight className="h-4 w-4" aria-hidden="true" />
               </Button>
             </div>
           </div>

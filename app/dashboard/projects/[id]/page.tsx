@@ -734,8 +734,8 @@ export default function ProjectDetailPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link href="/dashboard/projects">
-              <Button variant="ghost" size="sm">
-                <ArrowLeft className="h-4 w-4" />
+              <Button variant="ghost" size="sm" aria-label="Back to projects">
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               </Button>
             </Link>
             <div>
@@ -970,8 +970,9 @@ export default function ProjectDetailPage() {
                               e.stopPropagation()
                               handleOpenRemoveSubModal(sub)
                             }}
+                            aria-label={`Remove ${sub.name} from project`}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
                           </Button>
                         )}
                       </div>
@@ -1054,11 +1055,12 @@ export default function ProjectDetailPage() {
                       size="sm"
                       onClick={copyEmailToClipboard}
                       className="shrink-0"
+                      aria-label={emailCopied ? "Email copied" : "Copy email address"}
                     >
                       {emailCopied ? (
-                        <Check className="h-4 w-4 text-green-500" />
+                        <Check className="h-4 w-4 text-green-500" aria-hidden="true" />
                       ) : (
-                        <Copy className="h-4 w-4" />
+                        <Copy className="h-4 w-4" aria-hidden="true" />
                       )}
                     </Button>
                   </div>
@@ -1205,7 +1207,7 @@ export default function ProjectDetailPage() {
         <DialogContent onClose={() => setShowDeleteModal(false)}>
           <DialogHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center" aria-hidden="true">
                 <Trash2 className="h-5 w-5 text-red-600" />
               </div>
               <DialogTitle>Delete Project</DialogTitle>
@@ -1242,7 +1244,7 @@ export default function ProjectDetailPage() {
         <DialogContent onClose={() => setShowRemoveSubModal(false)}>
           <DialogHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center" aria-hidden="true">
                 <Trash2 className="h-5 w-5 text-red-600" />
               </div>
               <DialogTitle>Remove Subcontractor</DialogTitle>
@@ -1303,8 +1305,9 @@ export default function ProjectDetailPage() {
                     size="sm"
                     className="absolute top-2 right-2 h-8 w-8 p-0"
                     onClick={() => handleRemoveRequirement(index)}
+                    aria-label={`Remove ${req.coverage_type || 'insurance'} requirement`}
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" aria-hidden="true" />
                   </Button>
 
                   <div className="grid grid-cols-2 gap-4">

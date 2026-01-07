@@ -382,8 +382,8 @@ export default function SubcontractorDetailPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <Link href={backLink}>
-              <Button variant="ghost" size="sm">
-                <ArrowLeft className="h-4 w-4" />
+              <Button variant="ghost" size="sm" aria-label="Go back">
+                <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               </Button>
             </Link>
             <div>
@@ -863,8 +863,8 @@ export default function SubcontractorDetailPage() {
                               )}
                             </div>
                           </div>
-                          <Button variant="ghost" size="sm">
-                            <Eye className="h-4 w-4" />
+                          <Button variant="ghost" size="sm" aria-label="View communication details">
+                            <Eye className="h-4 w-4" aria-hidden="true" />
                           </Button>
                         </div>
                       </div>
@@ -873,7 +873,7 @@ export default function SubcontractorDetailPage() {
                 </div>
               ) : (
                 <div className="text-center py-8 text-slate-500">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                  <MessageSquare className="h-12 w-12 mx-auto mb-3 text-slate-300" aria-hidden="true" />
                   <p>No communications sent yet</p>
                   <p className="text-sm">Emails will appear here when they are sent</p>
                 </div>
@@ -943,8 +943,8 @@ export default function SubcontractorDetailPage() {
                               )}
                             </div>
                           </div>
-                          <Button variant="ghost" size="sm">
-                            <Eye className="h-4 w-4" />
+                          <Button variant="ghost" size="sm" aria-label="View exception details">
+                            <Eye className="h-4 w-4" aria-hidden="true" />
                           </Button>
                         </div>
                       </div>
@@ -953,7 +953,7 @@ export default function SubcontractorDetailPage() {
                 </div>
               ) : (
                 <div className="text-center py-8 text-slate-500">
-                  <AlertCircle className="h-12 w-12 mx-auto mb-3 text-slate-300" />
+                  <AlertCircle className="h-12 w-12 mx-auto mb-3 text-slate-300" aria-hidden="true" />
                   <p>No exceptions recorded</p>
                   <p className="text-sm">Exceptions will appear here when they are created</p>
                 </div>
@@ -1188,7 +1188,7 @@ export default function SubcontractorDetailPage() {
         <DialogContent onClose={() => setShowDeleteModal(false)}>
           <DialogHeader>
             <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center" aria-hidden="true">
                 <Trash2 className="h-5 w-5 text-red-600" />
               </div>
               <DialogTitle>Delete Subcontractor</DialogTitle>
