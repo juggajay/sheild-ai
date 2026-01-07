@@ -22,11 +22,13 @@ export async function GET(
     const { id } = await params
     const db = getDb()
 
-    // Get subcontractor details
+    // Get subcontractor details (only count active project assignments)
     const subcontractor = db.prepare(`
       SELECT
         s.*,
-        (SELECT COUNT(*) FROM project_subcontractors ps WHERE ps.subcontractor_id = s.id) as project_count
+        (SELECT COUNT(*) FROM project_subcontractors ps
+         JOIN projects p ON ps.project_id = p.id
+         WHERE ps.subcontractor_id = s.id AND p.status != 'completed') as project_count
       FROM subcontractors s
       WHERE s.id = ? AND s.company_id = ?
     `).get(id, user.company_id) as {
@@ -55,7 +57,7 @@ export async function GET(
       return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
     }
 
-    // Get projects this subcontractor is assigned to
+    // Get active projects this subcontractor is assigned to (exclude archived)
     const projects = db.prepare(`
       SELECT
         p.id,
@@ -65,7 +67,7 @@ export async function GET(
         ps.on_site_date
       FROM project_subcontractors ps
       JOIN projects p ON ps.project_id = p.id
-      WHERE ps.subcontractor_id = ?
+      WHERE ps.subcontractor_id = ? AND p.status != 'completed'
       ORDER BY p.name ASC
     `).all(id) as Array<{
       id: string

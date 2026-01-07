@@ -19,10 +19,12 @@ export async function GET(request: NextRequest) {
 
     const db = getDb()
 
-    // Get all subcontractors for the company
+    // Get all subcontractors for the company (only count active project assignments)
     const subcontractors = db.prepare(`
       SELECT s.*,
-        (SELECT COUNT(*) FROM project_subcontractors ps WHERE ps.subcontractor_id = s.id) as project_count
+        (SELECT COUNT(*) FROM project_subcontractors ps
+         JOIN projects p ON ps.project_id = p.id
+         WHERE ps.subcontractor_id = s.id AND p.status != 'completed') as project_count
       FROM subcontractors s
       WHERE s.company_id = ?
       ORDER BY s.name ASC
