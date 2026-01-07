@@ -3,7 +3,27 @@ import jwt from 'jsonwebtoken'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb, type User, type Session } from './db'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'riskshield-development-secret-key-change-in-production'
+const JWT_SECRET = process.env.JWT_SECRET
+
+// Validate JWT_SECRET at startup
+if (!JWT_SECRET) {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('FATAL: JWT_SECRET environment variable must be set in production')
+  }
+  console.warn('WARNING: JWT_SECRET not set. Using insecure development secret.')
+}
+
+/**
+ * Get the JWT secret, throwing in production if not set
+ */
+export function getJwtSecret(): string {
+  if (JWT_SECRET) return JWT_SECRET
+  if (process.env.NODE_ENV !== 'production') {
+    return 'riskshield-development-secret-key-DO-NOT-USE-IN-PRODUCTION'
+  }
+  throw new Error('JWT_SECRET must be set')
+}
+
 const SESSION_DURATION = 8 * 60 * 60 * 1000 // 8 hours in milliseconds
 
 /**
@@ -52,7 +72,7 @@ export function validatePassword(password: string): { valid: boolean; errors: st
 export function createSession(userId: string): { session: Session; token: string } {
   const db = getDb()
   const sessionId = uuidv4()
-  const token = jwt.sign({ sessionId, userId }, JWT_SECRET, { expiresIn: '8h' })
+  const token = jwt.sign({ sessionId, userId }, getJwtSecret(), { expiresIn: '8h' })
   const expiresAt = new Date(Date.now() + SESSION_DURATION).toISOString()
 
   const stmt = db.prepare(`
@@ -77,7 +97,7 @@ export function createSession(userId: string): { session: Session; token: string
  */
 export function validateSession(token: string): { valid: boolean; userId?: string; error?: string } {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { sessionId: string; userId: string }
+    const decoded = jwt.verify(token, getJwtSecret()) as { sessionId: string; userId: string }
     const db = getDb()
 
     const session = db.prepare(`
@@ -119,7 +139,7 @@ export function getUserByToken(token: string): User | null {
  */
 export function deleteSession(token: string): void {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { sessionId: string }
+    const decoded = jwt.verify(token, getJwtSecret()) as { sessionId: string }
     const db = getDb()
     db.prepare('DELETE FROM sessions WHERE id = ?').run(decoded.sessionId)
   } catch {
@@ -314,7 +334,7 @@ export function getOrCreatePortalUser(email: string, role: 'subcontractor' | 'br
 export function createPortalSession(userId: string): { session: Session; token: string } {
   const db = getDb()
   const sessionId = uuidv4()
-  const token = jwt.sign({ sessionId, userId, isPortal: true }, JWT_SECRET, { expiresIn: '24h' })
+  const token = jwt.sign({ sessionId, userId, isPortal: true }, getJwtSecret(), { expiresIn: '24h' })
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours for portal
 
   const stmt = db.prepare(`
