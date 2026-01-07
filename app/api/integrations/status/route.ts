@@ -1,19 +1,59 @@
 import { NextResponse } from "next/server"
+import { getUserByToken } from "@/lib/auth"
+import { cookies } from "next/headers"
+import { getDb } from "@/lib/db"
 
-// Check environment variables to determine integration status
+// Check environment variables and database for integration status
 export async function GET() {
   try {
-    // Check Microsoft 365 OAuth configuration
-    const hasMicrosoft365 = !!(
+    const db = getDb()
+    const cookieStore = cookies()
+    const token = cookieStore.get("auth_token")?.value
+
+    let microsoftConnection = null
+    let googleConnection = null
+
+    // If authenticated, check for actual OAuth connections
+    if (token) {
+      const user = await getUserByToken(token)
+      if (user && user.company_id) {
+        // Check for Microsoft 365 connection
+        try {
+          microsoftConnection = db.prepare(`
+            SELECT email, last_sync_at FROM oauth_connections
+            WHERE company_id = ? AND provider = 'microsoft'
+          `).get(user.company_id) as any
+        } catch (e) {
+          // Table may not exist yet
+        }
+
+        // Check for Google connection
+        try {
+          googleConnection = db.prepare(`
+            SELECT email, last_sync_at FROM oauth_connections
+            WHERE company_id = ? AND provider = 'google'
+          `).get(user.company_id) as any
+        } catch (e) {
+          // Table may not exist yet
+        }
+      }
+    }
+
+    // Check environment variables for configuration
+    const hasMicrosoftConfig = !!(
       process.env.MICROSOFT_CLIENT_ID &&
       process.env.MICROSOFT_CLIENT_SECRET
     )
 
-    // Check Google OAuth configuration
-    const hasGoogle = !!(
+    const hasGoogleConfig = !!(
       process.env.GOOGLE_CLIENT_ID &&
       process.env.GOOGLE_CLIENT_SECRET
     )
+
+    // In dev mode, allow connection even without env vars configured
+    const isDevMode = !process.env.MICROSOFT_CLIENT_ID ||
+                      process.env.MICROSOFT_CLIENT_ID === 'test' ||
+                      process.env.MICROSOFT_CLIENT_ID?.startsWith('test_')
 
     // Check SendGrid configuration
     const hasSendGrid = !!process.env.SENDGRID_API_KEY
@@ -28,15 +68,18 @@ export async function GET() {
     return NextResponse.json({
       email: {
         microsoft365: {
-          connected: hasMicrosoft365,
-          // In a real implementation, we'd check if there's an active OAuth token stored
-          email: hasMicrosoft365 ? undefined : undefined,
-          lastSync: undefined
+          connected: !!microsoftConnection,
+          configured: hasMicrosoftConfig || isDevMode,
+          email: microsoftConnection?.email || undefined,
+          lastSync: microsoftConnection?.last_sync_at || undefined,
+          devMode: isDevMode && !hasMicrosoftConfig
         },
         google: {
-          connected: hasGoogle,
-          email: hasGoogle ? undefined : undefined,
-          lastSync: undefined
+          connected: !!googleConnection,
+          configured: hasGoogleConfig || isDevMode,
+          email: googleConnection?.email || undefined,
+          lastSync: googleConnection?.last_sync_at || undefined,
+          devMode: isDevMode && !hasGoogleConfig
         }
       },
       communication: {

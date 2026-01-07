@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   Mail,
@@ -21,8 +21,8 @@ import { useToast } from "@/components/ui/use-toast"
 
 interface IntegrationStatus {
   email: {
-    microsoft365: { connected: boolean; email?: string; lastSync?: string }
-    google: { connected: boolean; email?: string; lastSync?: string }
+    microsoft365: { connected: boolean; configured?: boolean; email?: string; lastSync?: string; devMode?: boolean }
+    google: { connected: boolean; configured?: boolean; email?: string; lastSync?: string; devMode?: boolean }
   }
   communication: {
     sendgrid: { configured: boolean; verified?: boolean }
@@ -32,8 +32,10 @@ interface IntegrationStatus {
 
 export default function IntegrationsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
+  const [connectingService, setConnectingService] = useState<string | null>(null)
   const [status, setStatus] = useState<IntegrationStatus>({
     email: {
       microsoft365: { connected: false },
@@ -45,6 +47,42 @@ export default function IntegrationsPage() {
     }
   })
   const [testingService, setTestingService] = useState<string | null>(null)
+
+  // Handle OAuth callback query params
+  useEffect(() => {
+    const success = searchParams.get('success')
+    const error = searchParams.get('error')
+
+    if (success === 'microsoft_connected') {
+      toast({
+        title: "Microsoft 365 Connected",
+        description: "Your Microsoft 365 inbox is now connected. Emails with COC attachments will be automatically processed."
+      })
+      // Clear query params
+      router.replace('/dashboard/settings/integrations')
+    } else if (success === 'google_connected') {
+      toast({
+        title: "Google Workspace Connected",
+        description: "Your Gmail inbox is now connected. Emails with COC attachments will be automatically processed."
+      })
+      router.replace('/dashboard/settings/integrations')
+    } else if (error) {
+      const errorMessages: Record<string, string> = {
+        oauth_denied: "OAuth authorization was denied. Please try again.",
+        invalid_callback: "Invalid OAuth callback. Please try again.",
+        invalid_state: "OAuth state validation failed. Please try again.",
+        token_exchange_failed: "Failed to exchange OAuth code for tokens. Please try again.",
+        profile_failed: "Failed to get user profile. Please try again.",
+        callback_failed: "OAuth callback failed. Please try again."
+      }
+      toast({
+        title: "Connection Failed",
+        description: errorMessages[error] || "An error occurred during connection. Please try again.",
+        variant: "destructive"
+      })
+      router.replace('/dashboard/settings/integrations')
+    }
+  }, [searchParams, toast, router])
 
   useEffect(() => {
     fetchIntegrationStatus()
@@ -65,19 +103,65 @@ export default function IntegrationsPage() {
   }
 
   const handleConnectM365 = async () => {
-    toast({
-      title: "Microsoft 365 Integration",
-      description: "OAuth integration requires Microsoft Azure app configuration. Please set MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET in environment variables.",
-      variant: "destructive"
-    })
+    setConnectingService('microsoft365')
+    // Navigate to Microsoft OAuth connect endpoint
+    window.location.href = '/api/integrations/microsoft/connect'
+  }
+
+  const handleDisconnectM365 = async () => {
+    try {
+      const response = await fetch('/api/integrations/microsoft/disconnect', { method: 'POST' })
+      if (response.ok) {
+        toast({
+          title: "Microsoft 365 Disconnected",
+          description: "Your Microsoft 365 inbox has been disconnected."
+        })
+        fetchIntegrationStatus()
+      } else {
+        toast({
+          title: "Disconnect Failed",
+          description: "Failed to disconnect Microsoft 365. Please try again.",
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Disconnect Failed",
+        description: "An error occurred. Please try again.",
+        variant: "destructive"
+      })
+    }
   }
 
   const handleConnectGoogle = async () => {
-    toast({
-      title: "Google Integration",
-      description: "OAuth integration requires Google Cloud project configuration. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in environment variables.",
-      variant: "destructive"
-    })
+    setConnectingService('google')
+    // Navigate to Google OAuth connect endpoint
+    window.location.href = '/api/integrations/google/connect'
+  }
+
+  const handleDisconnectGoogle = async () => {
+    try {
+      const response = await fetch('/api/integrations/google/disconnect', { method: 'POST' })
+      if (response.ok) {
+        toast({
+          title: "Google Workspace Disconnected",
+          description: "Your Gmail inbox has been disconnected."
+        })
+        fetchIntegrationStatus()
+      } else {
+        toast({
+          title: "Disconnect Failed",
+          description: "Failed to disconnect Google Workspace. Please try again.",
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Disconnect Failed",
+        description: "An error occurred. Please try again.",
+        variant: "destructive"
+      })
+    }
   }
 
   const handleTestSendGrid = async () => {
@@ -206,6 +290,12 @@ export default function IntegrationsPage() {
                       <span className="text-slate-500">Connected as:</span>
                       <span className="font-medium">{status.email.microsoft365.email}</span>
                     </div>
+                    {status.email.microsoft365.devMode && (
+                      <div className="flex items-center gap-2 text-sm text-amber-600">
+                        <AlertCircle className="h-4 w-4" />
+                        Dev mode - inbox scanning simulated
+                      </div>
+                    )}
                     {status.email.microsoft365.lastSync && (
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-slate-500">Last synced:</span>
@@ -217,7 +307,12 @@ export default function IntegrationsPage() {
                         <RefreshCw className="h-4 w-4 mr-2" />
                         Sync Now
                       </Button>
-                      <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={handleDisconnectM365}
+                      >
                         Disconnect
                       </Button>
                     </div>
@@ -227,8 +322,20 @@ export default function IntegrationsPage() {
                     <p className="text-sm text-slate-500">
                       Allow RiskShield to scan your inbox for Certificate of Currency attachments.
                     </p>
-                    <Button onClick={handleConnectM365}>
-                      <ExternalLink className="h-4 w-4 mr-2" />
+                    {status.email.microsoft365.devMode && (
+                      <p className="text-xs text-amber-600">
+                        Dev mode: Connection will be simulated without real Microsoft API credentials.
+                      </p>
+                    )}
+                    <Button
+                      onClick={handleConnectM365}
+                      disabled={connectingService === 'microsoft365'}
+                    >
+                      {connectingService === 'microsoft365' ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                      )}
                       Connect Microsoft 365
                     </Button>
                   </div>
@@ -264,6 +371,12 @@ export default function IntegrationsPage() {
                       <span className="text-slate-500">Connected as:</span>
                       <span className="font-medium">{status.email.google.email}</span>
                     </div>
+                    {status.email.google.devMode && (
+                      <div className="flex items-center gap-2 text-sm text-amber-600">
+                        <AlertCircle className="h-4 w-4" />
+                        Dev mode - inbox scanning simulated
+                      </div>
+                    )}
                     {status.email.google.lastSync && (
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-slate-500">Last synced:</span>
@@ -275,7 +388,12 @@ export default function IntegrationsPage() {
                         <RefreshCw className="h-4 w-4 mr-2" />
                         Sync Now
                       </Button>
-                      <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={handleDisconnectGoogle}
+                      >
                         Disconnect
                       </Button>
                     </div>
@@ -285,8 +403,20 @@ export default function IntegrationsPage() {
                     <p className="text-sm text-slate-500">
                       Allow RiskShield to scan your Gmail inbox for Certificate of Currency attachments.
                     </p>
-                    <Button onClick={handleConnectGoogle}>
-                      <ExternalLink className="h-4 w-4 mr-2" />
+                    {status.email.google.devMode && (
+                      <p className="text-xs text-amber-600">
+                        Dev mode: Connection will be simulated without real Google API credentials.
+                      </p>
+                    )}
+                    <Button
+                      onClick={handleConnectGoogle}
+                      disabled={connectingService === 'google'}
+                    >
+                      {connectingService === 'google' ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                      )}
                       Connect Google
                     </Button>
                   </div>

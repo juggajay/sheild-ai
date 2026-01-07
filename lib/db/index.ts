@@ -360,6 +360,36 @@ function initializeSchema(db: Database.Database) {
     )
   `)
 
+  // OAuth states table (for CSRF protection during OAuth flow)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      provider TEXT NOT NULL CHECK(provider IN ('microsoft', 'google')),
+      state TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    )
+  `)
+
+  // OAuth connections table (stores OAuth tokens for connected accounts)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oauth_connections (
+      id TEXT PRIMARY KEY,
+      company_id TEXT NOT NULL REFERENCES companies(id),
+      provider TEXT NOT NULL CHECK(provider IN ('microsoft', 'google')),
+      email TEXT,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      token_expires_at TEXT,
+      last_sync_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(company_id, provider)
+    )
+  `)
+
   // Create indexes for performance
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -380,6 +410,8 @@ function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_company ON notifications(company_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, read);
+    CREATE INDEX IF NOT EXISTS idx_oauth_states_state ON oauth_states(state);
+    CREATE INDEX IF NOT EXISTS idx_oauth_connections_company ON oauth_connections(company_id);
   `)
 }
 
