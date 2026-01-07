@@ -160,7 +160,7 @@ export default function SignupPage() {
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {errors.form && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm" role="alert">
                 {errors.form}
               </div>
             )}
@@ -176,9 +176,11 @@ export default function SignupPage() {
                 onChange={handleChange}
                 disabled={isLoading}
                 className={errors.name ? "border-red-500" : ""}
+                aria-invalid={errors.name ? "true" : "false"}
+                aria-describedby={errors.name ? "name-error" : undefined}
               />
               {errors.name && (
-                <p className="text-red-500 text-sm">{errors.name}</p>
+                <p id="name-error" className="text-red-500 text-sm" role="alert">{errors.name}</p>
               )}
             </div>
 
@@ -193,9 +195,11 @@ export default function SignupPage() {
                 onChange={handleChange}
                 disabled={isLoading}
                 className={errors.email ? "border-red-500" : ""}
+                aria-invalid={errors.email ? "true" : "false"}
+                aria-describedby={errors.email ? "email-error" : undefined}
               />
               {errors.email && (
-                <p className="text-red-500 text-sm">{errors.email}</p>
+                <p id="email-error" className="text-red-500 text-sm" role="alert">{errors.email}</p>
               )}
             </div>
 
@@ -211,6 +215,8 @@ export default function SignupPage() {
                   onChange={handleChange}
                   disabled={isLoading}
                   className={errors.password ? "border-red-500 pr-10" : "pr-10"}
+                  aria-invalid={errors.password ? "true" : "false"}
+                  aria-describedby={errors.password ? "password-error" : undefined}
                 />
                 <button
                   type="button"
@@ -222,7 +228,7 @@ export default function SignupPage() {
                 </button>
               </div>
               {errors.password && (
-                <p className="text-red-500 text-sm">{errors.password}</p>
+                <p id="password-error" className="text-red-500 text-sm" role="alert">{errors.password}</p>
               )}
             </div>
 
@@ -241,9 +247,11 @@ export default function SignupPage() {
                     onChange={handleChange}
                     disabled={isLoading}
                     className={errors.companyName ? "border-red-500" : ""}
+                    aria-invalid={errors.companyName ? "true" : "false"}
+                    aria-describedby={errors.companyName ? "companyName-error" : undefined}
                   />
                   {errors.companyName && (
-                    <p className="text-red-500 text-sm">{errors.companyName}</p>
+                    <p id="companyName-error" className="text-red-500 text-sm" role="alert">{errors.companyName}</p>
                   )}
                 </div>
 
@@ -259,9 +267,11 @@ export default function SignupPage() {
                     disabled={isLoading}
                     className={errors.abn ? "border-red-500" : ""}
                     maxLength={14}
+                    aria-invalid={errors.abn ? "true" : "false"}
+                    aria-describedby={errors.abn ? "abn-error" : undefined}
                   />
                   {errors.abn && (
-                    <p className="text-red-500 text-sm">{errors.abn}</p>
+                    <p id="abn-error" className="text-red-500 text-sm" role="alert">{errors.abn}</p>
                   )}
                 </div>
               </div>

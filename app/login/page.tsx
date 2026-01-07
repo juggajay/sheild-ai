@@ -111,7 +111,7 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {errors.form && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm" role="alert">
                 {errors.form}
               </div>
             )}
@@ -127,9 +127,11 @@ export default function LoginPage() {
                 onChange={handleChange}
                 disabled={isLoading}
                 className={errors.email ? "border-red-500" : ""}
+                aria-invalid={errors.email ? "true" : "false"}
+                aria-describedby={errors.email ? "login-email-error" : undefined}
               />
               {errors.email && (
-                <p className="text-red-500 text-sm">{errors.email}</p>
+                <p id="login-email-error" className="text-red-500 text-sm" role="alert">{errors.email}</p>
               )}
             </div>
 
@@ -150,6 +152,8 @@ export default function LoginPage() {
                   onChange={handleChange}
                   disabled={isLoading}
                   className={errors.password ? "border-red-500 pr-10" : "pr-10"}
+                  aria-invalid={errors.password ? "true" : "false"}
+                  aria-describedby={errors.password ? "login-password-error" : undefined}
                 />
                 <button
                   type="button"
@@ -161,7 +165,7 @@ export default function LoginPage() {
                 </button>
               </div>
               {errors.password && (
-                <p className="text-red-500 text-sm">{errors.password}</p>
+                <p id="login-password-error" className="text-red-500 text-sm" role="alert">{errors.password}</p>
               )}
             </div>
           </CardContent>

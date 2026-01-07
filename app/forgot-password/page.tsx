@@ -126,7 +126,7 @@ export default function ForgotPasswordPage() {
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm" role="alert">
                 {error}
               </div>
             )}
@@ -147,6 +147,8 @@ export default function ForgotPasswordPage() {
                   }}
                   disabled={isLoading}
                   className="pl-10"
+                  aria-invalid={error ? "true" : "false"}
+                  aria-describedby={error ? "forgot-email-error" : undefined}
                 />
               </div>
             </div>

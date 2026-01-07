@@ -235,7 +235,7 @@ function ResetPasswordContent() {
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {errors.form && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm" role="alert">
                 {errors.form}
               </div>
             )}
@@ -252,6 +252,8 @@ function ResetPasswordContent() {
                   onChange={handleChange}
                   disabled={isLoading}
                   className={errors.password ? "border-red-500 pr-10" : "pr-10"}
+                  aria-invalid={errors.password ? "true" : "false"}
+                  aria-describedby={errors.password ? "reset-password-error" : undefined}
                 />
                 <button
                   type="button"
@@ -263,7 +265,7 @@ function ResetPasswordContent() {
                 </button>
               </div>
               {errors.password && (
-                <p className="text-red-500 text-sm">{errors.password}</p>
+                <p id="reset-password-error" className="text-red-500 text-sm" role="alert">{errors.password}</p>
               )}
             </div>
 
@@ -279,6 +281,8 @@ function ResetPasswordContent() {
                   onChange={handleChange}
                   disabled={isLoading}
                   className={errors.confirmPassword ? "border-red-500 pr-10" : "pr-10"}
+                  aria-invalid={errors.confirmPassword ? "true" : "false"}
+                  aria-describedby={errors.confirmPassword ? "reset-confirm-error" : undefined}
                 />
                 <button
                   type="button"
@@ -290,7 +294,7 @@ function ResetPasswordContent() {
                 </button>
               </div>
               {errors.confirmPassword && (
-                <p className="text-red-500 text-sm">{errors.confirmPassword}</p>
+                <p id="reset-confirm-error" className="text-red-500 text-sm" role="alert">{errors.confirmPassword}</p>
               )}
             </div>
 
