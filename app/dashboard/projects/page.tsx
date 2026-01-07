@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter, useSearchParams } from "next/navigation"
 import {
   FolderKanban,
   Plus,
@@ -14,12 +15,14 @@ import {
   Clock,
   MoreHorizontal,
   Filter,
-  ArrowUpDown
+  ArrowUpDown,
+  X
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
 
 interface Project {
   id: string
@@ -52,12 +55,70 @@ const AUSTRALIAN_STATES = ['NSW', 'VIC', 'QLD', 'WA', 'SA', 'TAS', 'ACT', 'NT']
 type SortOption = 'name' | 'compliance_asc' | 'compliance_desc' | 'date'
 
 export default function ProjectsPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
   const [projects, setProjects] = useState<Project[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [stateFilter, setStateFilter] = useState<string>('all')
   const [sortBy, setSortBy] = useState<SortOption>('name')
   const [user, setUser] = useState<User | null>(null)
+
+  // Read URL params on initial load
+  useEffect(() => {
+    const stateParam = searchParams.get('state')
+    const searchParam = searchParams.get('search')
+    const sortParam = searchParams.get('sort')
+
+    if (stateParam && AUSTRALIAN_STATES.includes(stateParam)) {
+      setStateFilter(stateParam)
+    }
+    if (searchParam) {
+      setSearchQuery(searchParam)
+    }
+    if (sortParam && ['name', 'compliance_asc', 'compliance_desc', 'date'].includes(sortParam)) {
+      setSortBy(sortParam as SortOption)
+    }
+  }, [searchParams])
+
+  // Update URL when filters change
+  const updateURL = (newState: string, newSearch: string, newSort: SortOption) => {
+    const params = new URLSearchParams()
+    if (newState !== 'all') params.set('state', newState)
+    if (newSearch.trim()) params.set('search', newSearch.trim())
+    if (newSort !== 'name') params.set('sort', newSort)
+
+    const queryString = params.toString()
+    router.push(`/dashboard/projects${queryString ? `?${queryString}` : ''}`, { scroll: false })
+  }
+
+  const handleStateFilterChange = (newState: string) => {
+    setStateFilter(newState)
+    updateURL(newState, searchQuery, sortBy)
+  }
+
+  const handleSearchChange = (newSearch: string) => {
+    setSearchQuery(newSearch)
+    // Debounce URL update for search to avoid too many history entries
+  }
+
+  const handleSortChange = (newSort: SortOption) => {
+    setSortBy(newSort)
+    updateURL(stateFilter, searchQuery, newSort)
+  }
+
+  // Check if any filters are active
+  const hasActiveFilters = searchQuery.trim() !== '' || stateFilter !== 'all' || sortBy !== 'name'
+
+  // Clear all filters function
+  const handleClearFilters = () => {
+    setSearchQuery('')
+    setStateFilter('all')
+    setSortBy('name')
+    // Clear URL params
+    router.push('/dashboard/projects', { scroll: false })
+  }
 
   useEffect(() => {
     fetchData()
@@ -153,7 +214,7 @@ export default function ProjectsPage() {
       </header>
 
       {/* Projects Content */}
-      <div className="p-6 space-y-6">
+      <div className="p-6 md:p-8 lg:p-12 space-y-6">
         {/* Search and Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
           <div className="relative flex-1 max-w-md">
@@ -171,7 +232,7 @@ export default function ProjectsPage() {
             <Filter className="h-4 w-4 text-slate-400" />
             <Select
               value={stateFilter}
-              onChange={(e) => setStateFilter(e.target.value)}
+              onChange={(e) => handleStateFilterChange(e.target.value)}
               className="w-[140px]"
             >
               <option value="all">All States</option>
@@ -186,7 +247,7 @@ export default function ProjectsPage() {
             <ArrowUpDown className="h-4 w-4 text-slate-400" />
             <Select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as SortOption)}
+              onChange={(e) => handleSortChange(e.target.value as SortOption)}
               className="w-[180px]"
             >
               <option value="name">Name (A-Z)</option>
@@ -195,19 +256,60 @@ export default function ProjectsPage() {
               <option value="date">Date (Newest First)</option>
             </Select>
           </div>
+
+          {/* Clear Filters Button */}
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleClearFilters}
+              className="text-slate-500 hover:text-slate-700"
+            >
+              <X className="h-4 w-4 mr-1" />
+              Clear filters
+            </Button>
+          )}
         </div>
 
         {/* Projects Grid */}
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map(i => (
-              <Card key={i} className="animate-pulse">
+            {[1, 2, 3, 4, 5, 6].map(i => (
+              <Card key={i}>
                 <CardHeader>
-                  <div className="h-6 bg-slate-200 rounded w-3/4"></div>
-                  <div className="h-4 bg-slate-200 rounded w-1/2 mt-2"></div>
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <Skeleton className="h-5 w-3/4 mb-2" />
+                      <div className="flex items-center gap-1">
+                        <Skeleton className="h-3 w-3" />
+                        <Skeleton className="h-3 w-32" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-6 w-16 rounded-full" />
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-20 bg-slate-200 rounded"></div>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-4">
+                      <Skeleton className="h-4 w-12" />
+                      <Skeleton className="h-4 w-24" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-4" />
+                      <Skeleton className="h-4 w-28" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-4 w-4" />
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between mb-1">
+                          <Skeleton className="h-3 w-16" />
+                          <Skeleton className="h-3 w-8" />
+                        </div>
+                        <Skeleton className="h-1.5 w-full rounded-full" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-3 w-24 mt-2" />
+                  </div>
                 </CardContent>
               </Card>
             ))}
