@@ -11,7 +11,8 @@ import {
   CreditCard,
   ChevronRight,
   FileText,
-  User as UserIcon
+  User as UserIcon,
+  Plug
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -93,6 +94,14 @@ export default function SettingsPage() {
             title="Security"
             description="Password, two-factor authentication, and session management"
             href="/dashboard/settings/security"
+          />
+
+          {/* Integrations - available to all users to view, admin to configure */}
+          <SettingsCard
+            icon={<Plug className="h-5 w-5 text-indigo-500" />}
+            title="Integrations"
+            description="Connect email, SendGrid, Twilio, and other services"
+            href="/dashboard/settings/integrations"
           />
 
           {/* Admin-only sections */}
