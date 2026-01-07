@@ -133,9 +133,21 @@ export default function DashboardPage() {
   const [complianceHistory, setComplianceHistory] = useState<ComplianceHistoryData | null>(null)
   const [historyDays, setHistoryDays] = useState(30)
   const [isLoading, setIsLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
+  // Initial data fetch
   useEffect(() => {
     fetchData()
+  }, [])
+
+  // Real-time polling - refresh dashboard data every 30 seconds
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      fetchDataSilently()
+    }, 30000) // 30 seconds
+
+    return () => clearInterval(pollInterval)
   }, [])
 
   useEffect(() => {
@@ -162,6 +174,44 @@ export default function DashboardPage() {
       console.error("Failed to fetch data:", error)
     } finally {
       setIsLoading(false)
+      setLastUpdated(new Date())
+    }
+  }
+
+  // Manual refresh with loading indicator
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true)
+    await fetchDataSilently()
+    setIsRefreshing(false)
+  }
+
+  // Silent fetch for real-time updates (no loading state)
+  const fetchDataSilently = async () => {
+    try {
+      const [userRes, briefRes, historyRes] = await Promise.all([
+        fetch("/api/auth/me"),
+        fetch("/api/morning-brief"),
+        fetch(`/api/compliance-history?days=${historyDays}`)
+      ])
+
+      if (userRes.ok) {
+        const userData = await userRes.json()
+        setUser(userData.user)
+      }
+
+      if (briefRes.ok) {
+        const briefData = await briefRes.json()
+        setMorningBrief(briefData)
+      }
+
+      if (historyRes.ok) {
+        const historyData = await historyRes.json()
+        setComplianceHistory(historyData)
+      }
+
+      setLastUpdated(new Date())
+    } catch (error) {
+      console.error("Failed to fetch data silently:", error)
     }
   }
 
@@ -193,6 +243,31 @@ export default function DashboardPage() {
             <p className="text-slate-500">Here&apos;s your compliance overview for today.</p>
           </div>
           <div className="flex items-center gap-4">
+            {/* Real-time update indicator */}
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <div className="flex items-center gap-1.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <span className="hidden sm:inline">Live</span>
+              </div>
+              {lastUpdated && (
+                <span className="hidden md:inline text-xs text-slate-400">
+                  Updated {formatTimeAgo(lastUpdated)}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                className="h-8 w-8 p-0"
+                aria-label="Refresh dashboard"
+              >
+                <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
             <NotificationsDropdown />
           </div>
         </div>
@@ -853,6 +928,19 @@ function getTimeOfDay() {
   if (hour < 12) return "morning"
   if (hour < 17) return "afternoon"
   return "evening"
+}
+
+function formatTimeAgo(date: Date): string {
+  const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000)
+
+  if (seconds < 10) return "just now"
+  if (seconds < 60) return `${seconds}s ago`
+
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h ago`
 }
 
 function DashboardSkeleton() {
