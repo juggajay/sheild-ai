@@ -2573,3 +2573,42 @@ Date: 2026-01-08
 
 ---
 
+## Session 41 Summary (Coding Agent - Regression Testing)
+Date: 2026-01-08
+
+### Completed Tasks
+
+1. **Regression Testing** ✅
+   - Tested 3 random passing features for regression
+   - All 3 features verified working correctly
+
+### Regression Test Details
+
+| Feature | Description | Status |
+|---------|-------------|--------|
+| #93 | Project detail navigation from list | ✅ PASS - Clicked E2E_COC_VERIFICATION_TEST project card, detail page loaded correctly, back button returned to list |
+| #123 | Min/max length on text fields | ✅ PASS - 1 character input shows "must be at least 2 characters" error with toast, 500+ chars truncated to 200 with counter showing 200/200 |
+| #107 | Real data: Dropdown options from database | ✅ PASS - Add Subcontractor modal shows hundreds of real subcontractors from DB with names, trades, and ABNs |
+
+### Technical Notes
+- Dev server running on port 3003
+- Logged in as regression_test_jan7@example.com (admin)
+- Dashboard shows: 17% compliance, 10 active projects, 1 stop work risk, 18 new COCs
+- Form validation working correctly with real-time character counter
+- Dropdown populated from database with 400+ subcontractors
+
+### Feature Statistics
+- Total Features: 222
+- Passing: 222
+- In Progress: 0
+- Percentage Complete: **100.0%**
+
+### Notes for Next Agent
+- Project is COMPLETE at 100%
+- Dev server runs on port 3003 (or next available if busy)
+- Test user (main app): regression_test_jan7@example.com / TestPass123!
+- All regression tests passing
+- No new features to implement - project is production-ready
+
+---
+
