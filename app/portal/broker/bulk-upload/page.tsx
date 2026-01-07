@@ -471,8 +471,9 @@ export default function BrokerBulkUploadPage() {
                           size="icon"
                           className="flex-shrink-0"
                           onClick={() => removeFile(index)}
+                          aria-label={`Remove file ${mapping.file.name}`}
                         >
-                          <X className="h-4 w-4" />
+                          <X className="h-4 w-4" aria-hidden="true" />
                         </Button>
                       </div>
                     ))}

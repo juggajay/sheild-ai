@@ -108,6 +108,8 @@ export async function POST(
       maximum_excess,
       principal_indemnity_required,
       cross_liability_required,
+      waiver_of_subrogation_required,
+      principal_naming_required,
       other_requirements
     } = body
 
@@ -135,9 +137,10 @@ export async function POST(
     db.prepare(`
       INSERT INTO insurance_requirements (
         id, project_id, coverage_type, minimum_limit, limit_type,
-        maximum_excess, principal_indemnity_required, cross_liability_required, other_requirements
+        maximum_excess, principal_indemnity_required, cross_liability_required,
+        waiver_of_subrogation_required, principal_naming_required, other_requirements
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       requirementId,
       params.id,
@@ -147,6 +150,8 @@ export async function POST(
       maximum_excess || null,
       principal_indemnity_required ? 1 : 0,
       cross_liability_required ? 1 : 0,
+      waiver_of_subrogation_required ? 1 : 0,
+      principal_naming_required || null,
       other_requirements || null
     )
 
@@ -232,9 +237,10 @@ export async function PUT(
       db.prepare(`
         INSERT INTO insurance_requirements (
           id, project_id, coverage_type, minimum_limit, limit_type,
-          maximum_excess, principal_indemnity_required, cross_liability_required, other_requirements
+          maximum_excess, principal_indemnity_required, cross_liability_required,
+          waiver_of_subrogation_required, principal_naming_required, other_requirements
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         requirementId,
         params.id,
@@ -244,6 +250,8 @@ export async function PUT(
         req.maximum_excess || null,
         req.principal_indemnity_required ? 1 : 0,
         req.cross_liability_required ? 1 : 0,
+        req.waiver_of_subrogation_required ? 1 : 0,
+        req.principal_naming_required || null,
         req.other_requirements || null
       )
     }

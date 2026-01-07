@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server"
-import { getCurrentUser } from "@/lib/auth"
+import { cookies } from "next/headers"
+import { getUserByToken } from "@/lib/auth"
 
 export async function POST() {
   try {
-    const user = await getCurrentUser()
+    const cookieStore = cookies()
+    const token = cookieStore.get("auth_token")?.value
+
+    if (!token) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+    }
+
+    const user = getUserByToken(token)
     if (!user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }

@@ -30,6 +30,7 @@ import {
   DialogDescription
 } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/use-toast"
+import { Skeleton } from "@/components/ui/skeleton"
 
 interface Document {
   id: string
@@ -373,7 +374,7 @@ export default function DocumentsPage() {
       </header>
 
       {/* Main Content */}
-      <div className="p-6 space-y-6">
+      <div className="p-6 md:p-8 lg:p-12 space-y-6">
         {/* Search and Stats */}
         <div className="flex items-center gap-4">
           <div className="relative flex-1 max-w-md">
@@ -458,9 +459,30 @@ export default function DocumentsPage() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="text-center py-12">
-                <Loader2 className="h-8 w-8 mx-auto animate-spin text-slate-400" />
-                <p className="text-sm text-slate-500 mt-2">Loading documents...</p>
+              <div className="divide-y">
+                {[1, 2, 3, 4, 5].map(i => (
+                  <div key={i} className="py-4 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <Skeleton className="w-10 h-10 rounded-lg" />
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Skeleton className="h-4 w-48" />
+                          <Skeleton className="h-5 w-16 rounded-full" />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Skeleton className="h-3 w-32" />
+                          <Skeleton className="h-3 w-2" />
+                          <Skeleton className="h-3 w-40" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Skeleton className="h-3 w-24" />
+                      <Skeleton className="h-8 w-8 rounded" />
+                      <Skeleton className="h-8 w-8 rounded" />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : filteredDocuments.length === 0 ? (
               <div className="text-center py-12 text-slate-500">

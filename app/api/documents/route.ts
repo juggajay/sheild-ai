@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb, type Project } from '@/lib/db'
 import { getUserByToken } from '@/lib/auth'
 import { createNotificationForProjectTeam } from '@/lib/notifications'
+import { performSimulatedFraudAnalysis, type FraudAnalysisResult } from '@/lib/fraud-detection'
 import fs from 'fs'
 import path from 'path'
 
@@ -14,6 +15,8 @@ interface InsuranceRequirement {
   maximum_excess: number | null
   principal_indemnity_required: number
   cross_liability_required: number
+  waiver_of_subrogation_required: number
+  principal_naming_required: 'principal_named' | 'interested_party' | null
 }
 
 // List of APRA-licensed general insurers in Australia
@@ -73,6 +76,18 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
   const isLowConfidence = fileName?.toLowerCase().includes('poor_quality') ||
                           fileName?.toLowerCase().includes('low_confidence') ||
                           fileName?.toLowerCase().includes('blurry')
+  // Test scenario for waiver of subrogation
+  const hasWaiverOfSubrogation = fileName?.toLowerCase().includes('waiver_subrogation') ||
+                                  fileName?.toLowerCase().includes('waiver') ||
+                                  isFullCompliance
+  const noWaiverOfSubrogation = fileName?.toLowerCase().includes('no_waiver') ||
+                                 fileName?.toLowerCase().includes('no_subrogation')
+  // Test scenario for principal naming types (interested party is less protection than principal naming)
+  const hasPrincipalNaming = fileName?.toLowerCase().includes('principal_named') ||
+                              fileName?.toLowerCase().includes('principal_naming') ||
+                              isFullCompliance
+  const hasInterestedPartyOnly = fileName?.toLowerCase().includes('interested_party') ||
+                                  fileName?.toLowerCase().includes('noted_party')
 
   const insurers = APRA_LICENSED_INSURERS.slice(0, 8) // Use first 8 APRA-licensed insurers for normal extraction
 
@@ -125,7 +140,10 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
         limit_type: 'per_occurrence',
         excess: publicLiabilityExcess,
         principal_indemnity: !isNoPrincipalIndemnity,
-        cross_liability: !isNoCrossLiability
+        cross_liability: !isNoCrossLiability,
+        waiver_of_subrogation: hasWaiverOfSubrogation && !noWaiverOfSubrogation,
+        // Principal naming type: 'principal_named' (stronger) vs 'interested_party' (weaker) vs null
+        principal_naming_type: hasPrincipalNaming ? 'principal_named' : (hasInterestedPartyOnly ? 'interested_party' : null)
       },
       {
         type: 'products_liability',
@@ -133,7 +151,9 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
         limit_type: 'aggregate',
         excess: productsLiabilityExcess,
         principal_indemnity: !isNoPrincipalIndemnity,
-        cross_liability: !isNoCrossLiability
+        cross_liability: !isNoCrossLiability,
+        waiver_of_subrogation: hasWaiverOfSubrogation && !noWaiverOfSubrogation,
+        principal_naming_type: hasPrincipalNaming ? 'principal_named' : (hasInterestedPartyOnly ? 'interested_party' : null)
       },
       {
         type: 'workers_comp',
@@ -141,14 +161,16 @@ function performAIExtraction(subcontractor: { id: string; name: string; abn: str
         limit_type: 'statutory',
         excess: 0,
         state: isVicWC ? 'VIC' : 'NSW',
-        employer_indemnity: true
+        employer_indemnity: true,
+        waiver_of_subrogation: hasWaiverOfSubrogation && !noWaiverOfSubrogation
       },
       {
         type: 'professional_indemnity',
         limit: professionalIndemnityLimit,
         limit_type: 'per_claim',
         excess: professionalIndemnityExcess,
-        retroactive_date: '2020-01-01'
+        retroactive_date: '2020-01-01',
+        waiver_of_subrogation: hasWaiverOfSubrogation && !noWaiverOfSubrogation
       }
     ],
     broker_name: 'ABC Insurance Brokers Pty Ltd',
@@ -442,6 +464,80 @@ function verifyAgainstRequirements(
         required_value: 'Yes',
         actual_value: 'No'
       })
+    }
+
+    // Check waiver of subrogation
+    if (requirement.waiver_of_subrogation_required && 'waiver_of_subrogation' in coverage) {
+      const hasWaiver = (coverage as { waiver_of_subrogation?: boolean }).waiver_of_subrogation
+      if (!hasWaiver) {
+        checks.push({
+          check_type: `waiver_of_subrogation_${requirement.coverage_type}`,
+          description: `${formatCoverageType(requirement.coverage_type)} waiver of subrogation`,
+          status: 'fail',
+          details: 'Waiver of subrogation required but not present'
+        })
+        deficiencies.push({
+          type: 'missing_endorsement',
+          severity: 'major',
+          description: `Waiver of subrogation required for ${formatCoverageType(requirement.coverage_type)}`,
+          required_value: 'Yes',
+          actual_value: 'No'
+        })
+      } else {
+        checks.push({
+          check_type: `waiver_of_subrogation_${requirement.coverage_type}`,
+          description: `${formatCoverageType(requirement.coverage_type)} waiver of subrogation`,
+          status: 'pass',
+          details: 'Waiver of subrogation clause detected and verified'
+        })
+      }
+    }
+
+    // Check principal naming requirement (principal_named vs interested_party)
+    if (requirement.principal_naming_required && 'principal_naming_type' in coverage) {
+      const actualNamingType = (coverage as { principal_naming_type?: string | null }).principal_naming_type
+      const requiredNamingType = requirement.principal_naming_required
+
+      if (!actualNamingType) {
+        // No principal naming found at all
+        checks.push({
+          check_type: `principal_naming_${requirement.coverage_type}`,
+          description: `${formatCoverageType(requirement.coverage_type)} principal naming`,
+          status: 'fail',
+          details: `${requiredNamingType === 'principal_named' ? 'Principal naming' : 'Interested party notation'} required but not found`
+        })
+        deficiencies.push({
+          type: 'missing_principal_naming',
+          severity: requiredNamingType === 'principal_named' ? 'critical' : 'major',
+          description: `${requiredNamingType === 'principal_named' ? 'Principal naming' : 'Interested party notation'} required for ${formatCoverageType(requirement.coverage_type)}`,
+          required_value: requiredNamingType === 'principal_named' ? 'Principal Named' : 'Interested Party',
+          actual_value: 'Not found'
+        })
+      } else if (requiredNamingType === 'principal_named' && actualNamingType === 'interested_party') {
+        // Required principal naming but only have interested party (weaker protection)
+        checks.push({
+          check_type: `principal_naming_${requirement.coverage_type}`,
+          description: `${formatCoverageType(requirement.coverage_type)} principal naming`,
+          status: 'fail',
+          details: 'Principal naming required but only Interested Party notation found (weaker protection)'
+        })
+        deficiencies.push({
+          type: 'insufficient_principal_naming',
+          severity: 'major',
+          description: `Principal naming required but only Interested Party notation found for ${formatCoverageType(requirement.coverage_type)}. Interested Party provides notification rights only, not full principal protection.`,
+          required_value: 'Principal Named',
+          actual_value: 'Interested Party Only'
+        })
+      } else {
+        // Either exact match or interested_party required and we have principal_named (even better)
+        const namingLabel = actualNamingType === 'principal_named' ? 'Principal Named' : 'Interested Party'
+        checks.push({
+          check_type: `principal_naming_${requirement.coverage_type}`,
+          description: `${formatCoverageType(requirement.coverage_type)} principal naming`,
+          status: 'pass',
+          details: `${namingLabel} - principal party identification verified`
+        })
+      }
     }
 
     // Check Workers Comp state matches project state

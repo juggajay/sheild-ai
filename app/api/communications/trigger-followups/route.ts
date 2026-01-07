@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '@/lib/db'
 import { getUserByToken } from '@/lib/auth'
+import { sendFollowUpEmail, isSendGridConfigured } from '@/lib/sendgrid'
 
 // POST /api/communications/trigger-followups - Trigger follow-up emails for pending responses
 // In production this would run as a scheduled job, this endpoint is for manual triggering/testing
@@ -141,6 +142,29 @@ Thank you for your prompt attention to this matter.
 Best regards,
 The Compliance Team`
 
+      // Actually send the email via SendGrid
+      let emailStatus = 'sent'
+      let emailError: string | undefined
+
+      if (isSendGridConfigured()) {
+        const emailResult = await sendFollowUpEmail({
+          recipientEmail,
+          subcontractorName: pending.subcontractor_name,
+          projectName: pending.project_name,
+          deficiencies,
+          daysWaiting,
+          uploadLink: process.env.NEXT_PUBLIC_APP_URL || undefined
+        })
+
+        if (!emailResult.success) {
+          emailStatus = 'failed'
+          emailError = emailResult.error
+          console.error('[Follow-up] Failed to send email:', emailResult.error)
+        }
+      } else {
+        console.log('[Follow-up] SendGrid not configured, recording communication without sending')
+      }
+
       db.prepare(`
         INSERT INTO communications (
           id, subcontractor_id, project_id, verification_id,
@@ -157,8 +181,8 @@ The Compliance Team`
         recipientEmail,
         emailSubject,
         emailBody,
-        'sent',
-        now,
+        emailStatus,
+        emailStatus === 'sent' ? now : null,
         now,
         now
       )

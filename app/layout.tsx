@@ -9,6 +9,9 @@ const inter = Inter({ subsets: ["latin"] })
 export const metadata: Metadata = {
   title: "RiskShield AI - Insurance Compliance Platform",
   description: "Autonomous Certificate of Currency (COC) compliance platform for the Australian construction industry",
+  icons: {
+    icon: "/icon.svg",
+  },
 }
 
 export default function RootLayout({

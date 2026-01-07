@@ -213,14 +213,14 @@ export default function ExpirationsCalendarPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 flex items-center justify-center h-full">
+      <div className="p-6 md:p-8 lg:p-12 flex items-center justify-center h-full">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     )
   }
 
   return (
-    <div className="p-6">
+    <div className="p-6 md:p-8 lg:p-12">
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-2 text-sm text-slate-500 mb-2">

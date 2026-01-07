@@ -1,0 +1,63 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 600 >>
+stream
+BT
+/F1 16 Tf
+50 750 Td
+(CERTIFICATE OF CURRENCY) Tj
+0 -30 Td
+/F1 12 Tf
+(Insured: EXPORT_TEST_SUB_001 Pty Ltd) Tj
+0 -20 Td
+(ABN: 53004085616) Tj
+0 -20 Td
+(Policy Number: PL-2026-001234) Tj
+0 -30 Td
+(PRODUCTS LIABILITY INSURANCE) Tj
+0 -20 Td
+(Coverage Type: Products Liability) Tj
+0 -20 Td
+(Limit of Liability: $20,000,000) Tj
+0 -20 Td
+(Excess: $5,000) Tj
+0 -20 Td
+(Period: 01/01/2026 to 31/12/2026) Tj
+0 -30 Td
+(PUBLIC LIABILITY INSURANCE) Tj
+0 -20 Td
+(Coverage Type: Public Liability) Tj
+0 -20 Td
+(Limit of Liability: $20,000,000) Tj
+0 -20 Td
+(Excess: $1,000) Tj
+0 -20 Td
+(Period: 01/01/2026 to 31/12/2026) Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f
+0000000009 00000 n
+0000000058 00000 n
+0000000115 00000 n
+0000000266 00000 n
+0000000919 00000 n
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+998
+%%EOF

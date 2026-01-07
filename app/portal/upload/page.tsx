@@ -562,8 +562,8 @@ function UploadContent() {
                           {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
                         </p>
                       </div>
-                      <Button variant="ghost" size="sm" onClick={() => setSelectedFile(null)}>
-                        <X className="h-4 w-4" />
+                      <Button variant="ghost" size="sm" onClick={() => setSelectedFile(null)} aria-label="Remove selected file">
+                        <X className="h-4 w-4" aria-hidden="true" />
                       </Button>
                     </div>
                   ) : (

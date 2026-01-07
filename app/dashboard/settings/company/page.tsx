@@ -283,7 +283,7 @@ export default function CompanySettingsPage() {
       </header>
 
       {/* Content */}
-      <div className="p-6 max-w-4xl">
+      <div className="p-6 md:p-8 lg:p-12 max-w-4xl">
         {!isAdmin && (
           <Card className="mb-6 border-amber-200 bg-amber-50">
             <CardContent className="py-4">

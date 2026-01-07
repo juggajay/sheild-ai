@@ -115,11 +115,25 @@ function initializeSchema(db: Database.Database) {
       maximum_excess REAL,
       principal_indemnity_required INTEGER DEFAULT 0,
       cross_liability_required INTEGER DEFAULT 0,
+      waiver_of_subrogation_required INTEGER DEFAULT 0,
+      principal_naming_required TEXT DEFAULT NULL CHECK(principal_naming_required IN ('principal_named', 'interested_party', NULL)),
       other_requirements TEXT,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `)
+
+  // Add waiver_of_subrogation_required column if it doesn't exist (migration)
+  try {
+    db.exec(`ALTER TABLE insurance_requirements ADD COLUMN waiver_of_subrogation_required INTEGER DEFAULT 0`)
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  try {
+    db.exec(`ALTER TABLE insurance_requirements ADD COLUMN principal_naming_required TEXT DEFAULT NULL`)
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   // Subcontractors table
   db.exec(`

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '@/lib/db'
 import { getUserByToken } from '@/lib/auth'
+import { sendFollowUpEmail, isSendGridConfigured } from '@/lib/sendgrid'
 
 // POST /api/communications/resend - Resend a follow-up communication for a failed verification
 export async function POST(request: NextRequest) {
@@ -74,22 +75,8 @@ export async function POST(request: NextRequest) {
     const communicationId = uuidv4()
     const now = new Date().toISOString()
 
-    db.prepare(`
-      INSERT INTO communications (
-        id, subcontractor_id, project_id, verification_id,
-        type, channel, recipient_email, subject, body,
-        status, sent_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      communicationId,
-      subcontractorId,
-      projectId,
-      verificationId,
-      'follow_up',
-      'email',
-      subcontractor.contact_email,
-      `Follow-up: Insurance Certificate Required - ${project.name}`,
-      `Dear ${subcontractor.name},
+    const emailSubject = `Follow-up: Insurance Certificate Required - ${project.name}`
+    const emailBody = `Dear ${subcontractor.name},
 
 This is a follow-up regarding your Certificate of Currency for project "${project.name}".
 
@@ -105,9 +92,52 @@ If you have already submitted an updated certificate, please disregard this mess
 Thank you for your prompt attention to this matter.
 
 Best regards,
-${'The Compliance Team'}`,
-      'sent', // Mark as sent (in production, this would queue for actual sending)
-      now,
+The Compliance Team`
+
+    // Actually send the email via SendGrid
+    let emailStatus = 'sent'
+    let emailError: string | undefined
+
+    if (isSendGridConfigured() && subcontractor.contact_email) {
+      const emailResult = await sendFollowUpEmail({
+        recipientEmail: subcontractor.contact_email,
+        subcontractorName: subcontractor.name,
+        projectName: project.name,
+        deficiencies,
+        daysWaiting: 0, // Manual resend, no specific wait time
+        uploadLink: process.env.NEXT_PUBLIC_APP_URL || undefined
+      })
+
+      if (!emailResult.success) {
+        emailStatus = 'failed'
+        emailError = emailResult.error
+        console.error('[Resend] Failed to send email:', emailResult.error)
+      }
+    } else if (!subcontractor.contact_email) {
+      emailStatus = 'failed'
+      emailError = 'No contact email available'
+    } else {
+      console.log('[Resend] SendGrid not configured, recording communication without sending')
+    }
+
+    db.prepare(`
+      INSERT INTO communications (
+        id, subcontractor_id, project_id, verification_id,
+        type, channel, recipient_email, subject, body,
+        status, sent_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      communicationId,
+      subcontractorId,
+      projectId,
+      verificationId,
+      'follow_up',
+      'email',
+      subcontractor.contact_email,
+      emailSubject,
+      emailBody,
+      emailStatus,
+      emailStatus === 'sent' ? now : null,
       now,
       now
     )
@@ -133,13 +163,14 @@ ${'The Compliance Team'}`,
     )
 
     return NextResponse.json({
-      success: true,
-      message: 'Follow-up communication sent',
+      success: emailStatus === 'sent',
+      message: emailStatus === 'sent' ? 'Follow-up communication sent' : `Failed to send email: ${emailError}`,
       communication: {
         id: communicationId,
         type: 'follow_up',
+        status: emailStatus,
         recipient: subcontractor.contact_email,
-        sent_at: now
+        sent_at: emailStatus === 'sent' ? now : null
       }
     })
 

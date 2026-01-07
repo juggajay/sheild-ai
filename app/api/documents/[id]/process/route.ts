@@ -99,6 +99,8 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
   const productsLiabilityLimit = isFullCompliance ? 20000000 : [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
   const workersCompLimit = isFullCompliance ? 2000000 : [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
   const professionalIndemnityLimit = isFullCompliance ? 5000000 : [1000000, 2000000, 5000000][Math.floor(Math.random() * 3)]
+  const motorVehicleLimit = isFullCompliance ? 20000000 : [5000000, 10000000, 20000000][Math.floor(Math.random() * 3)]
+  const contractWorksLimit = isFullCompliance ? 10000000 : [2000000, 5000000, 10000000][Math.floor(Math.random() * 3)]
 
   const extractedData = {
     // Insured party details
@@ -147,6 +149,18 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
         limit_type: 'per_claim',
         excess: 5000,
         retroactive_date: '2020-01-01'
+      },
+      {
+        type: 'motor_vehicle',
+        limit: motorVehicleLimit,
+        limit_type: 'per_occurrence',
+        excess: 500
+      },
+      {
+        type: 'contract_works',
+        limit: contractWorksLimit,
+        limit_type: 'per_project',
+        excess: 2500
       }
     ],
 
@@ -180,6 +194,8 @@ function extractPolicyDetails(document: CocDocument, subcontractor: Subcontracto
       products_liability_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.88 + Math.random() * 0.11,
       workers_comp_limit: isLowConfidence ? 0.40 + Math.random() * 0.30 : 0.85 + Math.random() * 0.12,
       professional_indemnity_limit: isLowConfidence ? 0.40 + Math.random() * 0.30 : 0.85 + Math.random() * 0.12,
+      motor_vehicle_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.88 + Math.random() * 0.11,
+      contract_works_limit: isLowConfidence ? 0.45 + Math.random() * 0.25 : 0.86 + Math.random() * 0.12,
       broker_name: isLowConfidence ? 0.30 + Math.random() * 0.35 : 0.80 + Math.random() * 0.15,
       broker_contact: isLowConfidence ? 0.25 + Math.random() * 0.35 : 0.75 + Math.random() * 0.18,
       broker_phone: isLowConfidence ? 0.30 + Math.random() * 0.35 : 0.78 + Math.random() * 0.17,

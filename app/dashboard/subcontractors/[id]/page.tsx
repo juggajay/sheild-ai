@@ -186,8 +186,8 @@ const COMMUNICATION_STATUS_STYLES: Record<string, { bg: string; text: string; la
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   compliant: { bg: 'bg-green-100', text: 'text-green-700', label: 'Compliant' },
   non_compliant: { bg: 'bg-red-100', text: 'text-red-700', label: 'Non-Compliant' },
-  pending: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Pending' },
-  exception: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'Exception' }
+  pending: { bg: 'bg-slate-100', text: 'text-slate-700', label: 'Pending' },
+  exception: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Exception' }
 }
 
 const VERIFICATION_STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -347,7 +347,7 @@ export default function SubcontractorDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
+      <div className="p-6 md:p-8 lg:p-12">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-slate-200 rounded w-1/4"></div>
           <div className="h-40 bg-slate-200 rounded"></div>
@@ -440,7 +440,7 @@ export default function SubcontractorDetailPage() {
       </header>
 
       {/* Content */}
-      <div className="p-6 space-y-6">
+      <div className="p-6 md:p-8 lg:p-12 space-y-6">
         {/* Tabs */}
         <div className="border-b">
           <nav className="flex gap-4">

@@ -70,6 +70,15 @@ export default function NewProjectPage() {
   const [projectManagerId, setProjectManagerId] = useState('')
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
 
+  // Validation state
+  const [nameError, setNameError] = useState('')
+  const [addressError, setAddressError] = useState('')
+
+  // Field length constraints
+  const NAME_MIN_LENGTH = 2
+  const NAME_MAX_LENGTH = 200
+  const ADDRESS_MAX_LENGTH = 500
+
   useEffect(() => {
     fetchTeamMembers()
     fetchTemplates()
@@ -107,13 +116,89 @@ export default function NewProjectPage() {
     return templates.find(t => t.id === selectedTemplateId)
   }
 
+  // Validate name field
+  const validateName = (value: string): string => {
+    const trimmed = value.trim()
+    if (trimmed.length === 0) {
+      return '' // Don't show error for empty field (required will handle it on submit)
+    }
+    if (trimmed.length < NAME_MIN_LENGTH) {
+      return `Project name must be at least ${NAME_MIN_LENGTH} characters`
+    }
+    if (value.length > NAME_MAX_LENGTH) {
+      return `Project name must not exceed ${NAME_MAX_LENGTH} characters`
+    }
+    return ''
+  }
+
+  // Validate address field
+  const validateAddress = (value: string): string => {
+    if (value.length > ADDRESS_MAX_LENGTH) {
+      return `Address must not exceed ${ADDRESS_MAX_LENGTH} characters`
+    }
+    return ''
+  }
+
+  // Handle name change with validation
+  const handleNameChange = (value: string) => {
+    // Prevent typing beyond max length
+    if (value.length > NAME_MAX_LENGTH) {
+      value = value.slice(0, NAME_MAX_LENGTH)
+    }
+    setName(value)
+    setNameError(validateName(value))
+  }
+
+  // Handle address change with validation
+  const handleAddressChange = (value: string) => {
+    // Prevent typing beyond max length
+    if (value.length > ADDRESS_MAX_LENGTH) {
+      value = value.slice(0, ADDRESS_MAX_LENGTH)
+    }
+    setAddress(value)
+    setAddressError(validateAddress(value))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!name.trim()) {
+    // Validate name
+    const trimmedName = name.trim()
+    if (!trimmedName) {
       toast({
         title: "Validation Error",
         description: "Project name is required",
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (trimmedName.length < NAME_MIN_LENGTH) {
+      setNameError(`Project name must be at least ${NAME_MIN_LENGTH} characters`)
+      toast({
+        title: "Validation Error",
+        description: `Project name must be at least ${NAME_MIN_LENGTH} characters`,
+        variant: "destructive"
+      })
+      return
+    }
+
+    if (name.length > NAME_MAX_LENGTH) {
+      setNameError(`Project name must not exceed ${NAME_MAX_LENGTH} characters`)
+      toast({
+        title: "Validation Error",
+        description: `Project name must not exceed ${NAME_MAX_LENGTH} characters`,
+        variant: "destructive"
+      })
+      return
+    }
+
+    // Validate address if provided
+    if (address.length > ADDRESS_MAX_LENGTH) {
+      setAddressError(`Address must not exceed ${ADDRESS_MAX_LENGTH} characters`)
+      toast({
+        title: "Validation Error",
+        description: `Address must not exceed ${ADDRESS_MAX_LENGTH} characters`,
         variant: "destructive"
       })
       return
@@ -198,7 +283,7 @@ export default function NewProjectPage() {
       </header>
 
       {/* Form Content */}
-      <div className="p-6 max-w-3xl mx-auto">
+      <div className="p-6 md:p-8 lg:p-12 max-w-3xl mx-auto">
         <form onSubmit={handleSubmit}>
           <Card>
             <CardHeader>
@@ -220,10 +305,24 @@ export default function NewProjectPage() {
                 <Input
                   id="name"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="e.g., Sydney Office Tower"
+                  maxLength={NAME_MAX_LENGTH}
+                  className={nameError ? 'border-red-500 focus:ring-red-500' : ''}
                   required
                 />
+                <div className="flex justify-between items-center">
+                  {nameError ? (
+                    <p className="text-xs text-red-500">{nameError}</p>
+                  ) : (
+                    <p className="text-xs text-slate-500">
+                      {NAME_MIN_LENGTH}-{NAME_MAX_LENGTH} characters
+                    </p>
+                  )}
+                  <p className={`text-xs ${name.length > NAME_MAX_LENGTH * 0.9 ? 'text-amber-500' : 'text-slate-400'}`}>
+                    {name.length}/{NAME_MAX_LENGTH}
+                  </p>
+                </div>
               </div>
 
               {/* Address */}
@@ -235,9 +334,21 @@ export default function NewProjectPage() {
                 <Input
                   id="address"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => handleAddressChange(e.target.value)}
                   placeholder="e.g., 123 George Street, Sydney"
+                  maxLength={ADDRESS_MAX_LENGTH}
+                  className={addressError ? 'border-red-500 focus:ring-red-500' : ''}
                 />
+                <div className="flex justify-between items-center">
+                  {addressError ? (
+                    <p className="text-xs text-red-500">{addressError}</p>
+                  ) : (
+                    <p className="text-xs text-slate-500">Optional</p>
+                  )}
+                  <p className={`text-xs ${address.length > ADDRESS_MAX_LENGTH * 0.9 ? 'text-amber-500' : 'text-slate-400'}`}>
+                    {address.length}/{ADDRESS_MAX_LENGTH}
+                  </p>
+                </div>
               </div>
 
               {/* State */}

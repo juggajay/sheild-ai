@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getDb } from '@/lib/db'
 import { createPasswordResetToken, getUserByEmail } from '@/lib/auth'
+import { sendPasswordResetEmail, isSendGridConfigured } from '@/lib/sendgrid'
 
 export async function POST(request: Request) {
   try {
@@ -23,19 +24,36 @@ export async function POST(request: Request) {
     if (user) {
       const { token, expiresAt } = createPasswordResetToken(user.id)
 
-      // In development, log the reset link to the console
+      // Build reset URL
       const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3005'}/reset-password?token=${token}`
 
-      console.log('\n========================================')
-      console.log('PASSWORD RESET LINK (Development Mode)')
-      console.log('========================================')
-      console.log(`Email: ${normalizedEmail}`)
-      console.log(`Reset URL: ${resetUrl}`)
-      console.log(`Expires: ${expiresAt}`)
-      console.log('========================================\n')
+      // In development or if SendGrid not configured, log the reset link to the console
+      if (process.env.NODE_ENV === 'development' || !isSendGridConfigured()) {
+        console.log('\n========================================')
+        console.log('PASSWORD RESET LINK (Development Mode)')
+        console.log('========================================')
+        console.log(`Email: ${normalizedEmail}`)
+        console.log(`Reset URL: ${resetUrl}`)
+        console.log(`Expires: ${expiresAt}`)
+        console.log('========================================\n')
+      }
 
-      // In production, this would send an email via SendGrid
-      // await sendPasswordResetEmail(normalizedEmail, resetUrl)
+      // Send email via SendGrid if configured
+      if (isSendGridConfigured()) {
+        const result = await sendPasswordResetEmail({
+          recipientEmail: normalizedEmail,
+          recipientName: user.name,
+          resetLink: resetUrl,
+          expiresInMinutes: 60
+        })
+
+        if (!result.success) {
+          console.error('[Password Reset] Failed to send email:', result.error)
+          // Don't expose failure to prevent enumeration
+        } else {
+          console.log('[Password Reset] Email sent successfully to:', normalizedEmail)
+        }
+      }
     }
 
     return NextResponse.json({

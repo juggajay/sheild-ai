@@ -66,8 +66,8 @@ const STATUS_STYLES = {
 const COMPLIANCE_STYLES: Record<string, { bg: string; text: string; label: string }> = {
   compliant: { bg: 'bg-green-100', text: 'text-green-700', label: 'Compliant' },
   non_compliant: { bg: 'bg-red-100', text: 'text-red-700', label: 'Non-Compliant' },
-  pending: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Pending' },
-  exception: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'Exception' }
+  pending: { bg: 'bg-slate-100', text: 'text-slate-700', label: 'Pending' },
+  exception: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Exception' }
 }
 
 export default function PortalDashboardPage() {

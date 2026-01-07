@@ -320,7 +320,7 @@ export default function ExceptionsPage() {
       </header>
 
       {/* Exceptions Content */}
-      <div className="p-6 space-y-6">
+      <div className="p-6 md:p-8 lg:p-12 space-y-6">
         {/* Search */}
         <div className="flex items-center gap-4">
           <div className="relative flex-1 max-w-md">

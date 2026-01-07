@@ -23,7 +23,10 @@ import {
   Loader2,
   X,
   Filter,
-  FileDown
+  FileDown,
+  FileText,
+  Upload,
+  Sparkles
 } from "lucide-react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -172,6 +175,31 @@ export default function ProjectDetailPage() {
     state: string
     status: string
   }>({ name: '', address: '', state: '', status: '' })
+
+  // Contract parsing modal state
+  const [showContractModal, setShowContractModal] = useState(false)
+  const [isParsingContract, setIsParsingContract] = useState(false)
+  const [contractFile, setContractFile] = useState<File | null>(null)
+  const [contractResults, setContractResults] = useState<{
+    requirements: Array<{
+      coverage_type: string
+      minimum_limit: number | null
+      maximum_excess: number | null
+      principal_indemnity_required: boolean
+      cross_liability_required: boolean
+      waiver_of_subrogation_required: boolean
+      notes: string | null
+    }>
+    extracted_clauses: Array<{
+      clause_number: string | null
+      clause_title: string
+      clause_text: string
+      related_coverage: string | null
+    }>
+    confidence_score: number
+    warnings: string[]
+  } | null>(null)
+  const [autoApplyContract, setAutoApplyContract] = useState(false)
 
   useEffect(() => {
     fetchUserRole()
@@ -584,6 +612,139 @@ export default function ProjectDetailPage() {
     }
   }
 
+  const handleOpenContractModal = () => {
+    setContractFile(null)
+    setContractResults(null)
+    setAutoApplyContract(false)
+    setShowContractModal(true)
+  }
+
+  const handleContractFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      // Validate file type
+      const allowedExtensions = ['.pdf', '.doc', '.docx']
+      const fileExt = '.' + file.name.split('.').pop()?.toLowerCase()
+      if (!allowedExtensions.includes(fileExt)) {
+        toast({
+          title: "Invalid File Type",
+          description: "Please upload a PDF or Word document (.pdf, .doc, .docx)",
+          variant: "destructive"
+        })
+        return
+      }
+      setContractFile(file)
+      setContractResults(null) // Reset previous results
+    }
+  }
+
+  const handleParseContract = async () => {
+    if (!contractFile) {
+      toast({
+        title: "No File Selected",
+        description: "Please select a contract file to parse",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsParsingContract(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', contractFile)
+      formData.append('autoApply', autoApplyContract.toString())
+
+      const response = await fetch(`/api/projects/${params.id}/parse-contract`, {
+        method: 'POST',
+        body: formData
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to parse contract')
+      }
+
+      setContractResults(data.extraction)
+
+      if (autoApplyContract && data.applied) {
+        toast({
+          title: "Contract Parsed & Applied",
+          description: `${data.extraction.requirements.length} insurance requirements extracted and applied to the project`
+        })
+        setShowContractModal(false)
+        fetchProject() // Refresh to show new requirements
+      } else {
+        toast({
+          title: "Contract Parsed",
+          description: `${data.extraction.requirements.length} insurance requirements extracted. Review and apply below.`
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Parsing Error",
+        description: error instanceof Error ? error.message : 'Failed to parse contract',
+        variant: "destructive"
+      })
+    } finally {
+      setIsParsingContract(false)
+    }
+  }
+
+  const handleApplyContractRequirements = async () => {
+    if (!contractResults || contractResults.requirements.length === 0) {
+      toast({
+        title: "No Requirements",
+        description: "No requirements to apply",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsParsingContract(true)
+    try {
+      // Convert contract requirements to the format expected by the API
+      const requirements = contractResults.requirements.map(req => ({
+        coverage_type: req.coverage_type,
+        minimum_limit: req.minimum_limit,
+        limit_type: 'per_occurrence',
+        maximum_excess: req.maximum_excess,
+        principal_indemnity_required: req.principal_indemnity_required,
+        cross_liability_required: req.cross_liability_required,
+        other_requirements: req.notes
+      }))
+
+      const response = await fetch(`/api/projects/${params.id}/requirements`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirements })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to apply requirements')
+      }
+
+      toast({
+        title: "Requirements Applied",
+        description: `${requirements.length} insurance requirements have been applied to the project`
+      })
+
+      setShowContractModal(false)
+      setContractResults(null)
+      fetchProject() // Refresh project data
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : 'Failed to apply requirements',
+        variant: "destructive"
+      })
+    } finally {
+      setIsParsingContract(false)
+    }
+  }
+
   const handleSaveRequirements = async () => {
     // Validate - all requirements need a coverage type
     const invalid = editingRequirements.some(req => !req.coverage_type)
@@ -727,7 +888,7 @@ export default function ProjectDetailPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6">
+      <div className="p-6 md:p-8 lg:p-12">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-slate-200 rounded w-1/4"></div>
           <div className="h-40 bg-slate-200 rounded"></div>
@@ -852,7 +1013,7 @@ export default function ProjectDetailPage() {
       </header>
 
       {/* Project Content */}
-      <div className="p-6 space-y-6">
+      <div className="p-6 md:p-8 lg:p-12 space-y-6">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
@@ -1015,8 +1176,8 @@ export default function ProjectDetailPage() {
                             <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
                               sub.status === 'compliant' ? 'bg-green-100 text-green-700' :
                               sub.status === 'non_compliant' ? 'bg-red-100 text-red-700' :
-                              sub.status === 'exception' ? 'bg-purple-100 text-purple-700' :
-                              'bg-amber-100 text-amber-700'
+                              sub.status === 'exception' ? 'bg-amber-100 text-amber-700' :
+                              'bg-slate-100 text-slate-700'
                             }`}>
                               {sub.status === 'non_compliant' ? 'Non-Compliant' :
                                sub.status.charAt(0).toUpperCase() + sub.status.slice(1)}
@@ -1182,6 +1343,22 @@ export default function ProjectDetailPage() {
                       <Shield className="h-4 w-4 mr-2" />
                       Save as Template
                     </Button>
+                  </div>
+                )}
+                {canModify && (
+                  <div className="mt-3 pt-3 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full bg-gradient-to-r from-primary/5 to-purple-500/5 border-primary/20 hover:border-primary/40"
+                      onClick={handleOpenContractModal}
+                    >
+                      <Sparkles className="h-4 w-4 mr-2 text-primary" />
+                      Parse Contract
+                    </Button>
+                    <p className="text-xs text-slate-400 mt-1 text-center">
+                      AI extracts requirements from contracts
+                    </p>
                   </div>
                 )}
               </CardContent>
@@ -1645,6 +1822,226 @@ export default function ProjectDetailPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Contract Parsing Modal */}
+      <Dialog open={showContractModal} onOpenChange={setShowContractModal}>
+        <DialogContent onClose={() => setShowContractModal(false)} className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Parse Contract for Requirements
+            </DialogTitle>
+            <DialogDescription>
+              Upload a contract (PDF or Word) and AI will extract insurance requirements automatically
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 mt-4">
+            {/* File Upload Area */}
+            <div className="space-y-2">
+              <Label htmlFor="contractFile">Contract Document</Label>
+              <div className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
+                {contractFile ? (
+                  <div className="flex items-center justify-center gap-3">
+                    <FileText className="h-10 w-10 text-primary" />
+                    <div className="text-left">
+                      <p className="font-medium text-slate-900">{contractFile.name}</p>
+                      <p className="text-sm text-slate-500">{(contractFile.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setContractFile(null)}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="h-10 w-10 mx-auto text-slate-400 mb-2" />
+                    <p className="text-sm text-slate-600 mb-2">
+                      Drag and drop or click to upload
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      Supports PDF, DOC, DOCX (max 20MB)
+                    </p>
+                  </>
+                )}
+                <input
+                  id="contractFile"
+                  type="file"
+                  accept=".pdf,.doc,.docx"
+                  onChange={handleContractFileChange}
+                  className={contractFile ? "hidden" : "absolute inset-0 w-full h-full opacity-0 cursor-pointer"}
+                  style={contractFile ? {} : { position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer' }}
+                />
+              </div>
+            </div>
+
+            {/* Auto-apply checkbox */}
+            <label className="flex items-center gap-2 cursor-pointer p-3 bg-slate-50 rounded-lg border">
+              <input
+                type="checkbox"
+                checked={autoApplyContract}
+                onChange={(e) => setAutoApplyContract(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+              />
+              <div>
+                <span className="text-sm font-medium">Auto-apply requirements</span>
+                <p className="text-xs text-slate-500">
+                  Automatically save extracted requirements to the project
+                </p>
+              </div>
+            </label>
+
+            {/* Parse Button */}
+            {!contractResults && (
+              <Button
+                onClick={handleParseContract}
+                disabled={!contractFile || isParsingContract}
+                className="w-full"
+              >
+                {isParsingContract ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Parsing Contract...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Parse Contract
+                  </>
+                )}
+              </Button>
+            )}
+
+            {/* Results Section */}
+            {contractResults && (
+              <div className="space-y-4">
+                {/* Confidence Score */}
+                <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                  <span className="text-sm font-medium">AI Confidence</span>
+                  <span className={`px-2 py-1 rounded text-sm font-medium ${
+                    contractResults.confidence_score >= 0.8 ? 'bg-green-100 text-green-700' :
+                    contractResults.confidence_score >= 0.6 ? 'bg-amber-100 text-amber-700' :
+                    'bg-red-100 text-red-700'
+                  }`}>
+                    {(contractResults.confidence_score * 100).toFixed(0)}%
+                  </span>
+                </div>
+
+                {/* Warnings */}
+                {contractResults.warnings.length > 0 && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                    <div className="flex items-center gap-2 text-amber-700 font-medium mb-1">
+                      <AlertTriangle className="h-4 w-4" />
+                      Warnings
+                    </div>
+                    <ul className="text-sm text-amber-600 list-disc list-inside">
+                      {contractResults.warnings.map((warning, idx) => (
+                        <li key={idx}>{warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Extracted Requirements */}
+                <div>
+                  <h4 className="font-medium text-slate-900 mb-2">
+                    Extracted Requirements ({contractResults.requirements.length})
+                  </h4>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {contractResults.requirements.map((req, idx) => (
+                      <div key={idx} className="p-3 bg-white border rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium capitalize">
+                            {req.coverage_type.replace(/_/g, ' ')}
+                          </span>
+                          {req.minimum_limit && (
+                            <span className="text-sm text-slate-600">
+                              ${req.minimum_limit.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-2 mt-2">
+                          {req.principal_indemnity_required && (
+                            <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
+                              Principal Indemnity
+                            </span>
+                          )}
+                          {req.cross_liability_required && (
+                            <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">
+                              Cross Liability
+                            </span>
+                          )}
+                          {req.waiver_of_subrogation_required && (
+                            <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded">
+                              Waiver of Subrogation
+                            </span>
+                          )}
+                          {req.maximum_excess && (
+                            <span className="text-xs px-2 py-0.5 bg-slate-100 text-slate-600 rounded">
+                              Max Excess: ${req.maximum_excess.toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                        {req.notes && (
+                          <p className="text-xs text-slate-500 mt-1">{req.notes}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Extracted Clauses */}
+                {contractResults.extracted_clauses.length > 0 && (
+                  <div>
+                    <h4 className="font-medium text-slate-900 mb-2">
+                      Relevant Contract Clauses ({contractResults.extracted_clauses.length})
+                    </h4>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {contractResults.extracted_clauses.map((clause, idx) => (
+                        <div key={idx} className="p-2 bg-slate-50 rounded border text-sm">
+                          <div className="font-medium text-slate-700">
+                            {clause.clause_number && `${clause.clause_number}. `}
+                            {clause.clause_title}
+                          </div>
+                          <p className="text-slate-600 text-xs mt-1">{clause.clause_text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="mt-6">
+            <Button type="button" variant="outline" onClick={() => setShowContractModal(false)}>
+              Cancel
+            </Button>
+            {contractResults && !autoApplyContract && (
+              <Button
+                onClick={handleApplyContractRequirements}
+                disabled={isParsingContract || contractResults.requirements.length === 0}
+              >
+                {isParsingContract ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Applying...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-4 w-4 mr-2" />
+                    Apply {contractResults.requirements.length} Requirements
+                  </>
+                )}
+              </Button>
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </>

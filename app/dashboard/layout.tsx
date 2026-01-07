@@ -193,6 +193,13 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
+      {/* Skip to main content link for keyboard users */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:bg-primary focus:text-white focus:px-4 focus:py-2 focus:rounded-md focus:shadow-lg"
+      >
+        Skip to main content
+      </a>
       <Sidebar user={user} pathname={pathname} onLogout={handleLogout} isOpen={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
       {/* Mobile menu button */}
       <button
@@ -207,9 +214,10 @@ export default function DashboardLayout({
         <div
           className="lg:hidden fixed inset-0 bg-black/50 z-40"
           onClick={() => setSidebarOpen(false)}
+          aria-hidden="true"
         />
       )}
-      <main className="flex-1 lg:ml-64 pt-16 lg:pt-0">
+      <main id="main-content" className="flex-1 lg:ml-64 pt-16 lg:pt-0" role="main">
         {children}
       </main>
     </div>
@@ -220,7 +228,10 @@ function Sidebar({ user, pathname, onLogout, isOpen, onToggle }: { user: User; p
   const isAdmin = user.role === 'admin'
 
   return (
-    <aside className={`w-64 bg-slate-900 text-white flex flex-col fixed h-screen z-50 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
+    <aside
+      className={`w-64 bg-slate-900 text-white flex flex-col fixed h-screen z-50 transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+      aria-label="Sidebar"
+    >
       <div className="p-4 border-b border-slate-800">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -238,7 +249,7 @@ function Sidebar({ user, pathname, onLogout, isOpen, onToggle }: { user: User; p
         </div>
       </div>
 
-      <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+      <nav className="flex-1 p-4 space-y-1 overflow-y-auto" aria-label="Main navigation">
         <NavItem
           icon={<Sun />}
           label="Morning Brief"

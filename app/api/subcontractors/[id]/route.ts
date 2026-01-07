@@ -330,6 +330,103 @@ export async function GET(
   }
 }
 
+// PUT /api/subcontractors/[id] - Update a subcontractor
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const token = request.cookies.get('auth_token')?.value
+
+    if (!token) {
+      return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+    }
+
+    const user = getUserByToken(token)
+    if (!user) {
+      return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const { id } = await params
+    const db = getDb()
+
+    // Check if subcontractor exists and belongs to user's company
+    const subcontractor = db.prepare(`
+      SELECT id FROM subcontractors WHERE id = ? AND company_id = ?
+    `).get(id, user.company_id) as { id: string } | undefined
+
+    if (!subcontractor) {
+      return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
+    }
+
+    const body = await request.json()
+    const {
+      name,
+      trading_name,
+      address,
+      trade,
+      contact_name,
+      contact_email,
+      contact_phone,
+      broker_name,
+      broker_email,
+      broker_phone,
+      workers_comp_state
+    } = body
+
+    // Build update query dynamically based on provided fields
+    const updates: string[] = []
+    const values: (string | null)[] = []
+
+    if (name !== undefined) { updates.push('name = ?'); values.push(name) }
+    if (trading_name !== undefined) { updates.push('trading_name = ?'); values.push(trading_name) }
+    if (address !== undefined) { updates.push('address = ?'); values.push(address) }
+    if (trade !== undefined) { updates.push('trade = ?'); values.push(trade) }
+    if (contact_name !== undefined) { updates.push('contact_name = ?'); values.push(contact_name) }
+    if (contact_email !== undefined) { updates.push('contact_email = ?'); values.push(contact_email) }
+    if (contact_phone !== undefined) { updates.push('contact_phone = ?'); values.push(contact_phone) }
+    if (broker_name !== undefined) { updates.push('broker_name = ?'); values.push(broker_name) }
+    if (broker_email !== undefined) { updates.push('broker_email = ?'); values.push(broker_email) }
+    if (broker_phone !== undefined) { updates.push('broker_phone = ?'); values.push(broker_phone) }
+    if (workers_comp_state !== undefined) { updates.push('workers_comp_state = ?'); values.push(workers_comp_state) }
+
+    if (updates.length === 0) {
+      return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
+    }
+
+    updates.push('updated_at = datetime(\'now\')')
+    values.push(id)
+
+    db.prepare(`
+      UPDATE subcontractors SET ${updates.join(', ')} WHERE id = ?
+    `).run(...values)
+
+    // Fetch and return updated subcontractor
+    const updated = db.prepare('SELECT * FROM subcontractors WHERE id = ?').get(id) as { name: string } | undefined
+
+    // Log the action
+    const { v4: uuidv4 } = await import('uuid')
+    db.prepare(`
+      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
+      VALUES (?, ?, ?, 'subcontractor', ?, 'update', ?)
+    `).run(
+      uuidv4(),
+      user.company_id,
+      user.id,
+      id,
+      JSON.stringify({
+        name: updated?.name,
+        updatedFields: Object.keys(body).filter(k => body[k] !== undefined)
+      })
+    )
+
+    return NextResponse.json(updated)
+  } catch (error) {
+    console.error('Update subcontractor error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 // DELETE /api/subcontractors/[id] - Delete a subcontractor
 export async function DELETE(
   request: NextRequest,

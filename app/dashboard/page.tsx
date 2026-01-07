@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { NotificationsDropdown } from "@/components/ui/notifications-dropdown"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   LineChart,
   Line,
@@ -177,7 +178,7 @@ export default function DashboardPage() {
   }
 
   if (isLoading || !user) {
-    return null // Layout handles loading state
+    return <DashboardSkeleton />
   }
 
   const stats = morningBrief?.stats
@@ -185,7 +186,7 @@ export default function DashboardPage() {
   return (
     <>
       {/* Top Bar */}
-      <header className="bg-white border-b px-6 py-4 sticky top-0 z-10">
+      <header className="bg-white border-b px-6 py-4 sticky top-0 z-10" role="banner" aria-label="Page header">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Good {getTimeOfDay()}, {user.name.split(" ")[0]}!</h1>
@@ -198,9 +199,10 @@ export default function DashboardPage() {
       </header>
 
       {/* Dashboard Content */}
-      <div className="p-6 space-y-6">
+      <div className="p-6 md:p-8 lg:p-12 space-y-6" aria-label="Dashboard content">
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <section aria-labelledby="stats-heading" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <h2 id="stats-heading" className="sr-only">Compliance Statistics</h2>
           <ComplianceGauge
             percentage={stats?.complianceRate ?? null}
             compliant={stats?.compliant ?? 0}
@@ -228,7 +230,7 @@ export default function DashboardPage() {
             icon={<AlertTriangle className="h-5 w-5 text-red-500" />}
             highlight={stats?.stopWorkCount ? stats.stopWorkCount > 0 : false}
           />
-        </div>
+        </section>
 
         {/* Compliance Trend Chart */}
         {stats && stats.total > 0 && (
@@ -851,4 +853,104 @@ function getTimeOfDay() {
   if (hour < 12) return "morning"
   if (hour < 17) return "afternoon"
   return "evening"
+}
+
+function DashboardSkeleton() {
+  return (
+    <>
+      {/* Top Bar Skeleton */}
+      <header className="bg-white border-b px-6 py-4 sticky top-0 z-10">
+        <div className="flex items-center justify-between">
+          <div>
+            <Skeleton className="h-8 w-64 mb-2" />
+            <Skeleton className="h-4 w-48" />
+          </div>
+          <Skeleton className="h-10 w-10 rounded-full" />
+        </div>
+      </header>
+
+      {/* Dashboard Content Skeleton */}
+      <div className="p-6 md:p-8 lg:p-12 space-y-6">
+        {/* Stats Cards Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <Card key={i}>
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <Skeleton className="h-4 w-24 mb-2" />
+                    <Skeleton className="h-8 w-16 mb-2" />
+                    <Skeleton className="h-3 w-20" />
+                  </div>
+                  <Skeleton className="h-10 w-10 rounded-lg" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Quick Start Guide Skeleton */}
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-48 mb-2" />
+            <Skeleton className="h-4 w-72" />
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="flex items-center gap-4 p-4 rounded-lg border">
+                  <Skeleton className="h-8 w-8 rounded-full" />
+                  <div className="flex-1">
+                    <Skeleton className="h-4 w-40 mb-2" />
+                    <Skeleton className="h-3 w-64" />
+                  </div>
+                  <Skeleton className="h-5 w-5" />
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Morning Brief Section Skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {[...Array(2)].map((_, i) => (
+            <Card key={i}>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Skeleton className="h-5 w-5" />
+                  <Skeleton className="h-5 w-32" />
+                </div>
+                <Skeleton className="h-4 w-56 mt-2" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-center py-8">
+                  <Skeleton className="h-12 w-12 mx-auto mb-3 rounded-lg" />
+                  <Skeleton className="h-4 w-32 mx-auto mb-2" />
+                  <Skeleton className="h-3 w-48 mx-auto" />
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Pending Responses Skeleton */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-5 w-5" />
+              <Skeleton className="h-5 w-36" />
+            </div>
+            <Skeleton className="h-4 w-64 mt-2" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-center py-8">
+              <Skeleton className="h-12 w-12 mx-auto mb-3 rounded-lg" />
+              <Skeleton className="h-4 w-32 mx-auto mb-2" />
+              <Skeleton className="h-3 w-48 mx-auto" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </>
+  )
 }

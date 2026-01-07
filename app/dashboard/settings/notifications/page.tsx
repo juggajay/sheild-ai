@@ -314,14 +314,14 @@ export default function NotificationsSettingsPage() {
 
   if (isLoading) {
     return (
-      <div className="p-6 flex items-center justify-center h-64">
+      <div className="p-6 md:p-8 lg:p-12 flex items-center justify-center h-64">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     )
   }
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
+    <div className="p-6 md:p-8 lg:p-12 max-w-6xl mx-auto">
       {/* Header */}
       <div className="mb-6">
         <Link

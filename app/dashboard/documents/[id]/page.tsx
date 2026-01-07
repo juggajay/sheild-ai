@@ -338,7 +338,7 @@ export default function DocumentDetailPage() {
 
   if (error || !document) {
     return (
-      <div className="p-6">
+      <div className="p-6 md:p-8 lg:p-12">
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <p className="text-red-800">{error || 'Document not found'}</p>
           <Link href="/dashboard/documents" className="text-blue-600 hover:text-blue-800 mt-2 inline-block">
@@ -354,7 +354,7 @@ export default function DocumentDetailPage() {
   const deficiencies: Deficiency[] = document.deficiencies ? JSON.parse(document.deficiencies) : []
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 md:p-8 lg:p-12 max-w-7xl mx-auto">
       {/* Header */}
       <div className="mb-6">
         <Link
