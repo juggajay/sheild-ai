@@ -30,11 +30,25 @@ function getRateLimiter(name: string, options: RateLimitOptions): LRUCache<strin
 // Set TRUST_PROXY=true in environment when behind a trusted proxy (e.g., Vercel, CloudFlare)
 const TRUST_PROXY = process.env.TRUST_PROXY === 'true'
 
+// Allow disabling rate limiting for stress testing
+// SECURITY: Only set this in development/testing environments, NEVER in production
+const DISABLE_RATE_LIMIT = process.env.DISABLE_RATE_LIMIT === 'true' && process.env.NODE_ENV !== 'production'
+
 export function rateLimit(options: RateLimitOptions) {
   const { interval, limit } = options
 
   return {
     check: (request: NextRequest, name: string): RateLimitResult => {
+      // Bypass rate limiting for stress tests (only in non-production)
+      if (DISABLE_RATE_LIMIT) {
+        return {
+          success: true,
+          limit: Infinity,
+          remaining: Infinity,
+          reset: 0
+        }
+      }
+
       const limiter = getRateLimiter(name, options)
       // Security: Only use proxy headers when explicitly configured to trust them
       // This prevents IP spoofing attacks via X-Forwarded-For manipulation
@@ -77,17 +91,23 @@ export function rateLimit(options: RateLimitOptions) {
   }
 }
 
+// Configurable rate limits via environment variables
+const AUTH_RATE_LIMIT_WINDOW = parseInt(process.env.AUTH_RATE_LIMIT_WINDOW || '900000', 10) // Default: 15 minutes
+const AUTH_RATE_LIMIT_MAX = parseInt(process.env.AUTH_RATE_LIMIT_MAX || '5', 10) // Default: 5 attempts
+const API_RATE_LIMIT_WINDOW = parseInt(process.env.API_RATE_LIMIT_WINDOW || '60000', 10) // Default: 1 minute
+const API_RATE_LIMIT_MAX = parseInt(process.env.API_RATE_LIMIT_MAX || '60', 10) // Default: 60 requests
+
 // Pre-configured limiters
 export const authLimiter = rateLimit({
-  interval: 15 * 60 * 1000, // 15 minutes
+  interval: AUTH_RATE_LIMIT_WINDOW,
   uniqueTokenPerInterval: 500,
-  limit: 5, // 5 attempts per 15 minutes
+  limit: AUTH_RATE_LIMIT_MAX,
 })
 
 export const apiLimiter = rateLimit({
-  interval: 60 * 1000, // 1 minute
+  interval: API_RATE_LIMIT_WINDOW,
   uniqueTokenPerInterval: 1000,
-  limit: 60, // 60 requests per minute
+  limit: API_RATE_LIMIT_MAX,
 })
 
 export function rateLimitResponse(result: RateLimitResult): NextResponse {

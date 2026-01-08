@@ -19,6 +19,36 @@ export const ENV = {
   STRIPE_WEBHOOK_SECRET: __ENV.STRIPE_WEBHOOK_SECRET || 'whsec_test',
 };
 
+// User pool for load testing - rotates through multiple users to avoid rate limiting
+export const USER_POOL = [
+  { email: 'admin@test.com', password: 'TestPassword123!' },
+  { email: 'user1@test.com', password: 'TestPassword123!' },
+  { email: 'user2@test.com', password: 'TestPassword123!' },
+  { email: 'user3@test.com', password: 'TestPassword123!' },
+  { email: 'user4@test.com', password: 'TestPassword123!' },
+  { email: 'user5@test.com', password: 'TestPassword123!' },
+  { email: 'user6@test.com', password: 'TestPassword123!' },
+  { email: 'user7@test.com', password: 'TestPassword123!' },
+  { email: 'user8@test.com', password: 'TestPassword123!' },
+  { email: 'user9@test.com', password: 'TestPassword123!' },
+  { email: 'user10@test.com', password: 'TestPassword123!' },
+  { email: 'user11@test.com', password: 'TestPassword123!' },
+  { email: 'user12@test.com', password: 'TestPassword123!' },
+  { email: 'user13@test.com', password: 'TestPassword123!' },
+  { email: 'user14@test.com', password: 'TestPassword123!' },
+  { email: 'user15@test.com', password: 'TestPassword123!' },
+  { email: 'user16@test.com', password: 'TestPassword123!' },
+  { email: 'user17@test.com', password: 'TestPassword123!' },
+  { email: 'user18@test.com', password: 'TestPassword123!' },
+  { email: 'user19@test.com', password: 'TestPassword123!' },
+];
+
+// Get a user from the pool based on VU number (distributes load across users)
+export function getUserFromPool(vuId) {
+  const index = vuId % USER_POOL.length;
+  return USER_POOL[index];
+}
+
 // Load test stages - customize based on your infrastructure
 export const LOAD_STAGES = {
   // Smoke test - verify system works

@@ -6,18 +6,29 @@
 import http from 'k6/http';
 import { check, fail } from 'k6';
 import { Rate } from 'k6/metrics';
-import { ENV } from '../config.js';
+import { ENV, getUserFromPool } from '../config.js';
 
 // Custom metrics
 export const loginSuccess = new Rate('login_success');
 
 /**
  * Login and get authentication token/cookies
- * @param {string} email - User email
- * @param {string} password - User password
+ * Uses user pool rotation when usePool=true to distribute load
+ * @param {string} email - User email (optional if using pool)
+ * @param {string} password - User password (optional if using pool)
+ * @param {boolean} usePool - Whether to use user pool rotation (default: true)
  * @returns {object} - Auth headers and cookies
  */
-export function login(email = ENV.ADMIN_EMAIL, password = ENV.ADMIN_PASSWORD) {
+export function login(email = null, password = null, usePool = true) {
+  // Use user pool if no credentials specified
+  if (usePool && !email) {
+    const user = getUserFromPool(__VU || 0);
+    email = user.email;
+    password = user.password;
+  } else if (!email) {
+    email = ENV.ADMIN_EMAIL;
+    password = ENV.ADMIN_PASSWORD;
+  }
   const url = `${ENV.API_URL}/auth/login`;
 
   const payload = JSON.stringify({

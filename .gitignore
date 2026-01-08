@@ -51,8 +51,11 @@ supabase/.temp/
 # Database files (features tracking)
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 features.db
 assistant.db
+riskshield.db*
 
 # Agent files
 .agent.lock
