@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { validatePasswordResetToken, usePasswordResetToken, updateUserPassword, validatePassword } from '@/lib/auth'
+import { useSupabase } from '@/lib/db/supabase-db'
+import {
+  validatePasswordResetToken,
+  validatePasswordResetTokenAsync,
+  usePasswordResetToken,
+  usePasswordResetTokenAsync,
+  updateUserPassword,
+  updateUserPasswordAsync,
+  validatePassword
+} from '@/lib/auth'
 import { authLimiter, rateLimitResponse } from '@/lib/rate-limit'
 
 export async function POST(request: NextRequest) {
@@ -35,8 +44,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate the reset token
-    const tokenValidation = validatePasswordResetToken(token)
+    // Validate the reset token (use async for Supabase)
+    const tokenValidation = useSupabase()
+      ? await validatePasswordResetTokenAsync(token)
+      : validatePasswordResetToken(token)
     if (!tokenValidation.valid || !tokenValidation.userId) {
       return NextResponse.json(
         { error: tokenValidation.error || 'Invalid or expired reset link' },
@@ -45,10 +56,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Security: Mark the token as used BEFORE updating password to prevent race condition
-    usePasswordResetToken(token)
+    if (useSupabase()) {
+      await usePasswordResetTokenAsync(token)
+    } else {
+      usePasswordResetToken(token)
+    }
 
     // Update the password
-    await updateUserPassword(tokenValidation.userId, password)
+    if (useSupabase()) {
+      await updateUserPasswordAsync(tokenValidation.userId, password)
+    } else {
+      await updateUserPassword(tokenValidation.userId, password)
+    }
 
     // Security: Only log sensitive operations in development
     if (process.env.NODE_ENV !== 'production') {

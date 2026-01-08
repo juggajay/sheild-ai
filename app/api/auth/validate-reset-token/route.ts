@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
-import { validatePasswordResetToken } from '@/lib/auth'
+import { useSupabase } from '@/lib/db/supabase-db'
+import { validatePasswordResetToken, validatePasswordResetTokenAsync } from '@/lib/auth'
 
 export async function GET(request: Request) {
   try {
@@ -13,7 +14,9 @@ export async function GET(request: Request) {
       )
     }
 
-    const validation = validatePasswordResetToken(token)
+    const validation = useSupabase()
+      ? await validatePasswordResetTokenAsync(token)
+      : validatePasswordResetToken(token)
 
     if (!validation.valid) {
       return NextResponse.json(

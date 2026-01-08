@@ -297,6 +297,30 @@ export function createPasswordResetToken(userId: string): { token: string; expir
 }
 
 /**
+ * Create a password reset token (async version for Supabase)
+ */
+export async function createPasswordResetTokenAsync(userId: string): Promise<{ token: string; expiresAt: string }> {
+  const supabase = getSupabase()
+  const tokenId = uuidv4()
+  const token = uuidv4()
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+
+  // Invalidate any existing tokens for this user
+  await supabase.from('password_reset_tokens').delete().eq('user_id', userId)
+
+  // Create new token
+  await supabase.from('password_reset_tokens').insert({
+    id: tokenId,
+    user_id: userId,
+    token,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString()
+  })
+
+  return { token, expiresAt }
+}
+
+/**
  * Validate a password reset token
  */
 export function validatePasswordResetToken(token: string): { valid: boolean; userId?: string; error?: string } {
@@ -322,11 +346,46 @@ export function validatePasswordResetToken(token: string): { valid: boolean; use
 }
 
 /**
+ * Validate a password reset token (async version for Supabase)
+ */
+export async function validatePasswordResetTokenAsync(token: string): Promise<{ valid: boolean; userId?: string; error?: string }> {
+  const supabase = getSupabase()
+
+  const { data: resetToken, error } = await supabase
+    .from('password_reset_tokens')
+    .select('*')
+    .eq('token', token)
+    .single()
+
+  if (error || !resetToken) {
+    return { valid: false, error: 'Invalid or expired reset link' }
+  }
+
+  if (resetToken.used) {
+    return { valid: false, error: 'This reset link has already been used' }
+  }
+
+  if (new Date(resetToken.expires_at) < new Date()) {
+    return { valid: false, error: 'This reset link has expired' }
+  }
+
+  return { valid: true, userId: resetToken.user_id }
+}
+
+/**
  * Use a password reset token (mark as used)
  */
 export function usePasswordResetToken(token: string): void {
   const db = getDb()
   db.prepare('UPDATE password_reset_tokens SET used = 1 WHERE token = ?').run(token)
+}
+
+/**
+ * Use a password reset token (async version for Supabase)
+ */
+export async function usePasswordResetTokenAsync(token: string): Promise<void> {
+  const supabase = getSupabase()
+  await supabase.from('password_reset_tokens').update({ used: true }).eq('token', token)
 }
 
 /**
@@ -339,6 +398,21 @@ export function getUserByEmail(email: string): User | null {
 }
 
 /**
+ * Get user by email (async version for Supabase)
+ */
+export async function getUserByEmailAsync(email: string): Promise<User | null> {
+  const supabase = getSupabase()
+  const { data, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('email', email.toLowerCase())
+    .single()
+
+  if (error || !data) return null
+  return data as User
+}
+
+/**
  * Update user password
  */
 export async function updateUserPassword(userId: string, newPassword: string): Promise<void> {
@@ -348,6 +422,22 @@ export async function updateUserPassword(userId: string, newPassword: string): P
 
   // Invalidate all existing sessions for this user
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId)
+}
+
+/**
+ * Update user password (async version for Supabase)
+ */
+export async function updateUserPasswordAsync(userId: string, newPassword: string): Promise<void> {
+  const supabase = getSupabase()
+  const passwordHash = await hashPassword(newPassword)
+
+  await supabase
+    .from('users')
+    .update({ password_hash: passwordHash, updated_at: new Date().toISOString() })
+    .eq('id', userId)
+
+  // Invalidate all existing sessions for this user
+  await supabase.from('sessions').delete().eq('user_id', userId)
 }
 
 /**
