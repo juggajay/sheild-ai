@@ -304,6 +304,11 @@ export default function CommunicationsPage() {
                 <div
                   className="p-4 cursor-pointer"
                   onClick={() => setExpandedId(expandedId === comm.id ? null : comm.id)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedId(expandedId === comm.id ? null : comm.id); }}}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={expandedId === comm.id}
+                  aria-label={`${comm.subject || 'Communication'} - click to ${expandedId === comm.id ? 'collapse' : 'expand'}`}
                 >
                   <div className="flex items-start gap-4">
                     <div className="flex-shrink-0 mt-1">

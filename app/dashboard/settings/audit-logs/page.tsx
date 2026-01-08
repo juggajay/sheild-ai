@@ -271,8 +271,9 @@ export default function AuditLogsPage() {
               variant="ghost"
               size="icon"
               onClick={() => router.push('/dashboard/settings')}
+              aria-label="Back to settings"
             >
-              <ArrowLeft className="h-5 w-5" />
+              <ArrowLeft className="h-5 w-5" aria-hidden="true" />
             </Button>
             <div>
               <h1 className="text-2xl font-semibold text-slate-900">Audit Logs</h1>

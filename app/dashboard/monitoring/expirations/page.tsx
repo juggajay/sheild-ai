@@ -336,6 +336,10 @@ export default function ExpirationsCalendarPage() {
                 <div
                   key={index}
                   onClick={() => handleDateClick(day)}
+                  onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && hasExpirations) { e.preventDefault(); handleDateClick(day); }}}
+                  role={hasExpirations ? 'button' : undefined}
+                  tabIndex={hasExpirations ? 0 : undefined}
+                  aria-label={hasExpirations ? `${day.date.toLocaleDateString()} - ${day.expirations.length} expiration(s)` : undefined}
                   className={`
                     min-h-[80px] p-2 rounded-md border transition-colors
                     ${!day.isCurrentMonth ? 'bg-slate-50 text-slate-400' : 'bg-white'}

@@ -25,6 +25,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge"
 import { NotificationsDropdown } from "@/components/ui/notifications-dropdown"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useToast } from "@/components/ui/use-toast"
 
 // Dynamic import for recharts - reduces initial bundle by ~300KB
 const ComplianceChart = dynamic(
@@ -531,6 +532,7 @@ function NewCocItem({ coc }: { coc: NewCoc }) {
 }
 
 function PendingResponseItem({ response }: { response: PendingResponse }) {
+  const { toast } = useToast()
   const urgencyColor = response.days_waiting >= 7
     ? 'bg-red-100 text-red-700'
     : response.days_waiting >= 3
@@ -553,13 +555,24 @@ function PendingResponseItem({ response }: { response: PendingResponse }) {
       })
 
       if (res.ok) {
-        alert('Follow-up notification sent successfully')
+        toast({
+          title: "Notification Sent",
+          description: "Follow-up notification sent successfully"
+        })
       } else {
         const data = await res.json()
-        alert(data.error || 'Failed to send notification')
+        toast({
+          title: "Error",
+          description: data.error || 'Failed to send notification',
+          variant: "destructive"
+        })
       }
     } catch {
-      alert('Failed to send notification')
+      toast({
+        title: "Error",
+        description: 'Failed to send notification',
+        variant: "destructive"
+      })
     }
   }
 
@@ -629,7 +642,15 @@ function ComplianceGauge({
   const strokeDashoffset = circumference - (displayPercentage / 100) * circumference
 
   return (
-    <Card className="cursor-pointer hover:border-primary transition-colors" onClick={() => setShowBreakdown(!showBreakdown)}>
+    <Card
+      className="cursor-pointer hover:border-primary transition-colors"
+      onClick={() => setShowBreakdown(!showBreakdown)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowBreakdown(!showBreakdown); }}}
+      role="button"
+      tabIndex={0}
+      aria-expanded={showBreakdown}
+      aria-label="Toggle compliance breakdown"
+    >
       <CardContent className="pt-6">
         <div className="flex items-center gap-4">
           {/* Circular Gauge */}

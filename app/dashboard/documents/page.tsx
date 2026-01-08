@@ -475,14 +475,21 @@ export default function DocumentsPage() {
                         <div
                           className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center cursor-pointer hover:bg-slate-200 transition-colors"
                           onClick={() => router.push(`/dashboard/documents/${doc.id}`)}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/dashboard/documents/${doc.id}`); }}}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`View document ${doc.file_name || 'Untitled'}`}
                         >
-                          <FileText className="h-5 w-5 text-slate-500" />
+                          <FileText className="h-5 w-5 text-slate-500" aria-hidden="true" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
                             <span
                               className="font-medium text-slate-900 hover:text-blue-600 cursor-pointer transition-colors"
                               onClick={() => router.push(`/dashboard/documents/${doc.id}`)}
+                              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); router.push(`/dashboard/documents/${doc.id}`); }}}
+                              role="link"
+                              tabIndex={0}
                             >
                               {doc.file_name || 'Untitled Document'}
                             </span>

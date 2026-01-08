@@ -150,9 +150,10 @@ export function useMorningBrief() {
   return useQuery({
     queryKey: queryKeys.morningBrief,
     queryFn: () => fetchApi<MorningBriefData>('/api/morning-brief'),
-    staleTime: 30 * 1000, // 30 seconds (real-time dashboard)
+    staleTime: 60 * 1000, // 1 minute
     gcTime: 5 * 60 * 1000, // 5 minutes
-    refetchInterval: 30 * 1000, // Auto-refresh every 30 seconds
+    refetchInterval: 60 * 1000, // Auto-refresh every 60 seconds
+    refetchIntervalInBackground: false, // Only poll when tab is focused
   })
 }
 
@@ -237,9 +238,10 @@ export function useNotifications(limit = 10) {
   return useQuery({
     queryKey: [...queryKeys.notifications, limit],
     queryFn: () => fetchApi<{ notifications: any[] }>(`/api/notifications?limit=${limit}`).then(r => r.notifications),
-    staleTime: 30 * 1000, // 30 seconds
+    staleTime: 60 * 1000, // 1 minute
     gcTime: 5 * 60 * 1000,
     refetchInterval: 60 * 1000, // Refresh every minute
+    refetchIntervalInBackground: false, // Only poll when tab is focused
   })
 }
 

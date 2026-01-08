@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import Link from "next/link"
 import { useSubcontractors, useUser } from "@/lib/hooks/use-api"
 import {
@@ -666,15 +666,25 @@ export default function SubcontractorsPage() {
   // Trim search query - whitespace-only should be treated as empty search
   const trimmedSearchQuery = searchQuery.trim()
 
-  const filteredSubcontractors = subcontractors.filter(sub => {
-    // If search query is empty (or whitespace-only), show all results
-    if (!trimmedSearchQuery) return true
+  // Memoize filtered subcontractors to avoid recalculation on every render
+  const filteredSubcontractors = useMemo(() => {
+    return subcontractors.filter(sub => {
+      // If search query is empty (or whitespace-only), show all results
+      if (!trimmedSearchQuery) return true
 
-    return sub.name.toLowerCase().includes(trimmedSearchQuery.toLowerCase()) ||
-      sub.abn.includes(trimmedSearchQuery) ||
-      sub.trade?.toLowerCase().includes(trimmedSearchQuery.toLowerCase()) ||
-      sub.contact_name?.toLowerCase().includes(trimmedSearchQuery.toLowerCase())
-  })
+      return sub.name.toLowerCase().includes(trimmedSearchQuery.toLowerCase()) ||
+        sub.abn.includes(trimmedSearchQuery) ||
+        sub.trade?.toLowerCase().includes(trimmedSearchQuery.toLowerCase()) ||
+        sub.contact_name?.toLowerCase().includes(trimmedSearchQuery.toLowerCase())
+    })
+  }, [subcontractors, trimmedSearchQuery])
+
+  // Memoize stats to avoid recalculation on every render
+  const stats = useMemo(() => ({
+    total: subcontractors.length,
+    withProjects: subcontractors.filter(s => s.project_count > 0).length,
+    available: subcontractors.filter(s => s.project_count === 0).length
+  }), [subcontractors])
 
   if (isLoading) {
     return (
@@ -813,7 +823,7 @@ export default function SubcontractorsPage() {
                 <div>
                   <p className="text-sm font-medium text-slate-500">With Projects</p>
                   <p className="text-3xl font-bold mt-1">
-                    {subcontractors.filter(s => s.project_count > 0).length}
+                    {stats.withProjects}
                   </p>
                 </div>
                 <div className="p-2 bg-slate-100 rounded-lg">
@@ -828,7 +838,7 @@ export default function SubcontractorsPage() {
                 <div>
                   <p className="text-sm font-medium text-slate-500">Available</p>
                   <p className="text-3xl font-bold mt-1">
-                    {subcontractors.filter(s => s.project_count === 0).length}
+                    {stats.available}
                   </p>
                 </div>
                 <div className="p-2 bg-slate-100 rounded-lg">

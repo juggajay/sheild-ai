@@ -165,9 +165,9 @@ export default function ProfileSettingsPage() {
       <header className="bg-white border-b px-6 py-4 sticky top-0 z-10">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/dashboard/settings">
-              <Button variant="ghost" size="icon">
-                <ArrowLeft className="h-5 w-5" />
+            <Link href="/dashboard/settings" aria-label="Back to settings">
+              <Button variant="ghost" size="icon" aria-label="Back to settings">
+                <ArrowLeft className="h-5 w-5" aria-hidden="true" />
               </Button>
             </Link>
             <div>

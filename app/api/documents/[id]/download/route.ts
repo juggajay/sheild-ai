@@ -95,7 +95,7 @@ export async function GET(
     return new NextResponse(new Uint8Array(result.buffer), {
       headers: {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="${document.file_name}"`,
+        'Content-Disposition': `attachment; filename="${(document.file_name || 'document').replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
         'Content-Length': result.buffer.length.toString()
       }
     })
