@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserByToken } from '@/lib/auth'
-import { getDb } from '@/lib/db'
+import { getUserByToken, getUserByTokenAsync } from '@/lib/auth'
+import { getDb, isProduction, getSupabase } from '@/lib/db'
 
 export async function GET(request: NextRequest) {
   try {
@@ -13,32 +13,66 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const user = getUserByToken(token)
-
-    if (!user) {
-      const response = NextResponse.json(
-        { error: 'Session expired or invalid' },
-        { status: 401 }
-      )
-      // Clear invalid cookie
-      response.cookies.set('auth_token', '', {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge: 0,
-        path: '/'
-      })
-      return response
-    }
-
-    // Get company info
-    const db = getDb()
+    let user
     let company = null
-    if (user.company_id) {
-      company = db.prepare(`
-        SELECT id, name, abn, logo_url, subscription_tier, subscription_status
-        FROM companies WHERE id = ?
-      `).get(user.company_id)
+
+    if (isProduction) {
+      // Production: Use Supabase
+      user = await getUserByTokenAsync(token)
+
+      if (!user) {
+        const response = NextResponse.json(
+          { error: 'Session expired or invalid' },
+          { status: 401 }
+        )
+        response.cookies.set('auth_token', '', {
+          httpOnly: true,
+          secure: true,
+          sameSite: 'lax',
+          maxAge: 0,
+          path: '/'
+        })
+        return response
+      }
+
+      // Get company info
+      if (user.company_id) {
+        const supabase = getSupabase()
+        const { data: companyData } = await supabase
+          .from('companies')
+          .select('id, name, abn, logo_url, subscription_tier, subscription_status')
+          .eq('id', user.company_id)
+          .single()
+        company = companyData
+      }
+
+    } else {
+      // Development: Use SQLite
+      user = getUserByToken(token)
+
+      if (!user) {
+        const response = NextResponse.json(
+          { error: 'Session expired or invalid' },
+          { status: 401 }
+        )
+        response.cookies.set('auth_token', '', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'lax',
+          maxAge: 0,
+          path: '/'
+        })
+        return response
+      }
+
+      // Get company info
+      if (user.company_id) {
+        const db = getDb()
+        company = db.prepare(`
+          SELECT id, name, abn, logo_url, subscription_tier, subscription_status
+          FROM companies WHERE id = ?
+        `).get(user.company_id)
+      }
     }
 
     return NextResponse.json({

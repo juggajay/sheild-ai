@@ -1,10 +1,36 @@
 import Database from 'better-sqlite3'
 import path from 'path'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 
-// Database singleton
+// Check if we should use Supabase (production) or SQLite (development)
+export const isProduction = !!(
+  process.env.NEXT_PUBLIC_SUPABASE_URL &&
+  process.env.SUPABASE_SERVICE_ROLE_KEY &&
+  process.env.NODE_ENV === 'production'
+)
+
+// Supabase client singleton
+let supabaseClient: SupabaseClient | null = null
+
+export function getSupabase(): SupabaseClient {
+  if (!supabaseClient) {
+    supabaseClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
+    )
+  }
+  return supabaseClient
+}
+
+// Database singleton (SQLite for development)
 let db: Database.Database | null = null
 
 export function getDb(): Database.Database {
+  // In production on Vercel, SQLite won't work - warn developers
+  if (isProduction) {
+    console.warn('Warning: getDb() called in production. Use Supabase functions instead.')
+  }
+
   if (!db) {
     const dbPath = path.join(process.cwd(), 'riskshield.db')
     db = new Database(dbPath)
@@ -13,6 +39,9 @@ export function getDb(): Database.Database {
   }
   return db
 }
+
+// Re-export Supabase database functions for production use
+export * from './supabase-db'
 
 function initializeSchema(db: Database.Database) {
   // Companies table

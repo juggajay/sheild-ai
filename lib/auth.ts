@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { v4 as uuidv4 } from 'uuid'
-import { getDb, type User, type Session } from './db'
+import { getDb, getSupabase, isProduction, type User, type Session } from './db'
 
 const JWT_SECRET = process.env.JWT_SECRET
 
@@ -93,6 +93,85 @@ export function createSession(userId: string): { session: Session; token: string
 }
 
 /**
+ * Create a session for a user (async version for Supabase)
+ */
+export async function createSessionAsync(userId: string): Promise<{ session: Session; token: string }> {
+  const sessionId = uuidv4()
+  const token = jwt.sign({ sessionId, userId }, getJwtSecret(), { expiresIn: '8h' })
+  const expiresAt = new Date(Date.now() + SESSION_DURATION).toISOString()
+
+  const supabase = getSupabase()
+  await supabase.from('sessions').insert({
+    id: sessionId,
+    user_id: userId,
+    token,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString()
+  })
+
+  const session: Session = {
+    id: sessionId,
+    user_id: userId,
+    token,
+    expires_at: expiresAt,
+    created_at: new Date().toISOString()
+  }
+
+  return { session, token }
+}
+
+/**
+ * Validate a session token (async version for Supabase)
+ */
+export async function validateSessionAsync(token: string): Promise<{ valid: boolean; userId?: string; error?: string }> {
+  try {
+    const decoded = jwt.verify(token, getJwtSecret()) as { sessionId: string; userId: string }
+    const supabase = getSupabase()
+
+    const { data: session, error } = await supabase
+      .from('sessions')
+      .select('*')
+      .eq('id', decoded.sessionId)
+      .eq('token', token)
+      .single()
+
+    if (error || !session) {
+      return { valid: false, error: 'Session not found' }
+    }
+
+    if (new Date(session.expires_at) < new Date()) {
+      // Clean up expired session
+      await supabase.from('sessions').delete().eq('id', session.id)
+      return { valid: false, error: 'Session expired' }
+    }
+
+    return { valid: true, userId: session.user_id }
+  } catch (error) {
+    return { valid: false, error: 'Invalid token' }
+  }
+}
+
+/**
+ * Get user by session token (async version for Supabase)
+ */
+export async function getUserByTokenAsync(token: string): Promise<User | null> {
+  const validation = await validateSessionAsync(token)
+  if (!validation.valid || !validation.userId) {
+    return null
+  }
+
+  const supabase = getSupabase()
+  const { data: user, error } = await supabase
+    .from('users')
+    .select('*')
+    .eq('id', validation.userId)
+    .single()
+
+  if (error || !user) return null
+  return user as User
+}
+
+/**
  * Validate a session token
  */
 export function validateSession(token: string): { valid: boolean; userId?: string; error?: string } {
@@ -142,6 +221,19 @@ export function deleteSession(token: string): void {
     const decoded = jwt.verify(token, getJwtSecret()) as { sessionId: string }
     const db = getDb()
     db.prepare('DELETE FROM sessions WHERE id = ?').run(decoded.sessionId)
+  } catch {
+    // Token invalid, nothing to delete
+  }
+}
+
+/**
+ * Delete a session (async version for Supabase)
+ */
+export async function deleteSessionAsync(token: string): Promise<void> {
+  try {
+    const decoded = jwt.verify(token, getJwtSecret()) as { sessionId: string }
+    const supabase = getSupabase()
+    await supabase.from('sessions').delete().eq('id', decoded.sessionId)
   } catch {
     // Token invalid, nothing to delete
   }
