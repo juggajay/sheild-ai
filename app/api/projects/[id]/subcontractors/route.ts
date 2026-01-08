@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb, type Project } from '@/lib/db'
 import { getUserByToken } from '@/lib/auth'
+import { sendSubcontractorInvitation } from '@/lib/invitation'
 
 // Helper function to check if user has access to project
 function canAccessProject(user: { id: string; company_id: string | null; role: string }, project: Project): boolean {
@@ -145,10 +146,30 @@ export async function POST(
       subcontractorId
     }))
 
+    // Send invitation email (optional - controlled by sendInvitation param)
+    const sendInvitation = body.sendInvitation !== false // Default to true
+    let invitationSent = false
+    let invitationError: string | undefined
+
+    if (sendInvitation) {
+      const invitationResult = await sendSubcontractorInvitation(
+        params.id,
+        subcontractorId,
+        projectSubcontractorId
+      )
+      invitationSent = invitationResult.success
+      if (!invitationResult.success) {
+        invitationError = invitationResult.error
+        console.warn('Failed to send invitation:', invitationResult.error)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Subcontractor added to project',
-      projectSubcontractorId
+      projectSubcontractorId,
+      invitationSent,
+      invitationError
     }, { status: 201 })
 
   } catch (error) {

@@ -314,6 +314,35 @@ function initializeSchema(db: Database.Database) {
     )
   `)
 
+  // Add invitation support columns to magic_link_tokens
+  try {
+    db.exec(`ALTER TABLE magic_link_tokens ADD COLUMN type TEXT DEFAULT 'magic_link'`)
+  } catch (e) {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE magic_link_tokens ADD COLUMN project_id TEXT`)
+  } catch (e) {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE magic_link_tokens ADD COLUMN subcontractor_id TEXT`)
+  } catch (e) {
+    // Column already exists
+  }
+
+  // Add invitation tracking to project_subcontractors
+  try {
+    db.exec(`ALTER TABLE project_subcontractors ADD COLUMN invitation_sent_at TEXT`)
+  } catch (e) {
+    // Column already exists
+  }
+  try {
+    db.exec(`ALTER TABLE project_subcontractors ADD COLUMN invitation_status TEXT DEFAULT 'not_sent'`)
+  } catch (e) {
+    // Column already exists
+  }
+
   // Email templates table
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_templates (
@@ -407,6 +436,8 @@ function initializeSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_token ON magic_link_tokens(token);
     CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_email ON magic_link_tokens(email);
+    CREATE INDEX IF NOT EXISTS idx_magic_link_tokens_type ON magic_link_tokens(type);
+    CREATE INDEX IF NOT EXISTS idx_project_subcontractors_invitation ON project_subcontractors(invitation_status);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_company ON notifications(company_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(user_id, read);

@@ -13,9 +13,11 @@ function VerifyContent() {
   const searchParams = useSearchParams()
   const { toast } = useToast()
   const token = searchParams.get("token")
+  const type = searchParams.get("type") // 'invitation' or null for magic_link
 
   const [status, setStatus] = useState<"validating" | "success" | "error">("validating")
   const [errorMessage, setErrorMessage] = useState("")
+  const [isInvitation, setIsInvitation] = useState(false)
 
   useEffect(() => {
     async function verifyToken() {
@@ -27,12 +29,15 @@ function VerifyContent() {
 
       try {
         // First validate the token
-        const validateResponse = await fetch(`/api/portal/auth/verify?token=${token}`)
+        const validateUrl = type === 'invitation'
+          ? `/api/portal/auth/verify?token=${token}&type=invitation`
+          : `/api/portal/auth/verify?token=${token}`
+        const validateResponse = await fetch(validateUrl)
         const validateData = await validateResponse.json()
 
         if (!validateResponse.ok) {
           setStatus("error")
-          setErrorMessage(validateData.error || "Invalid or expired magic link")
+          setErrorMessage(validateData.error || "Invalid or expired link")
           return
         }
 
@@ -42,7 +47,7 @@ function VerifyContent() {
           headers: {
             "Content-Type": "application/json"
           },
-          body: JSON.stringify({ token })
+          body: JSON.stringify({ token, type: type || 'magic_link' })
         })
 
         const verifyData = await verifyResponse.json()
@@ -54,14 +59,19 @@ function VerifyContent() {
         }
 
         setStatus("success")
+        setIsInvitation(verifyData.isInvitation || false)
+
         toast({
           title: "Welcome!",
-          description: "You have been signed in successfully.",
+          description: verifyData.isInvitation
+            ? "You have been signed in. Redirecting to upload your certificate..."
+            : "You have been signed in successfully.",
         })
 
-        // Redirect to portal dashboard after a short delay
+        // Redirect using the URL from the API response
+        const redirectUrl = verifyData.redirectUrl || "/portal/dashboard"
         setTimeout(() => {
-          router.push("/portal/dashboard")
+          router.push(redirectUrl)
         }, 2000)
       } catch (error) {
         setStatus("error")
@@ -70,7 +80,7 @@ function VerifyContent() {
     }
 
     verifyToken()
-  }, [token, router, toast])
+  }, [token, type, router, toast])
 
   if (status === "validating") {
     return (
@@ -130,7 +140,9 @@ function VerifyContent() {
           </div>
           <CardTitle>You&apos;re signed in!</CardTitle>
           <CardDescription>
-            Redirecting you to the portal dashboard...
+            {isInvitation
+              ? "Redirecting you to upload your certificate..."
+              : "Redirecting you to the portal dashboard..."}
           </CardDescription>
         </CardHeader>
         <CardContent className="py-4 text-center">
