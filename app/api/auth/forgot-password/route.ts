@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
-import { createPasswordResetToken, getUserByEmail } from '@/lib/auth'
+import { useSupabase } from '@/lib/db/supabase-db'
+import { createPasswordResetToken, createPasswordResetTokenAsync, getUserByEmail, getUserByEmailAsync } from '@/lib/auth'
 import { sendPasswordResetEmail, isSendGridConfigured } from '@/lib/sendgrid'
 import { authLimiter, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -23,13 +23,17 @@ export async function POST(request: NextRequest) {
 
     const normalizedEmail = email.toLowerCase().trim()
 
-    // Check if user exists
-    const user = getUserByEmail(normalizedEmail)
+    // Check if user exists (use async for Supabase in production)
+    const user = useSupabase()
+      ? await getUserByEmailAsync(normalizedEmail)
+      : getUserByEmail(normalizedEmail)
 
     // Always return success to prevent email enumeration
     // But only create token and log if user exists
     if (user) {
-      const { token, expiresAt } = createPasswordResetToken(user.id)
+      const { token, expiresAt } = useSupabase()
+        ? await createPasswordResetTokenAsync(user.id)
+        : createPasswordResetToken(user.id)
 
       // Build reset URL
       const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3005'}/reset-password?token=${token}`
