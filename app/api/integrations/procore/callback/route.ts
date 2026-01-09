@@ -189,7 +189,18 @@ export async function GET(request: NextRequest) {
       }
 
       companies = await companiesResponse.json()
+      console.log(`[Procore] Companies response:`, JSON.stringify(companies))
     }
+
+    // Check if we got any companies
+    if (!companies || companies.length === 0) {
+      console.error('[Procore] No companies returned from Procore API')
+      return NextResponse.redirect(
+        new URL('/dashboard/settings/integrations?error=no_companies&details=No%20Procore%20companies%20found%20for%20this%20account', request.url)
+      )
+    }
+
+    console.log(`[Procore] Found ${companies.length} companies`)
 
     // Store tokens (with pending company selection if multiple companies)
     const connectionId = uuidv4()
