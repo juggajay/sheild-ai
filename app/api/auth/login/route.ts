@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
-import { getDb, isProduction, getSupabase, type User } from '@/lib/db'
+import { getDb, type User } from '@/lib/db'
+import { useSupabase, getSupabase } from '@/lib/db/supabase-db'
 import { verifyPassword, createSession, createSessionAsync } from '@/lib/auth'
 import { authLimiter, rateLimitResponse } from '@/lib/rate-limit'
 
@@ -26,7 +27,8 @@ export async function POST(request: NextRequest) {
     let user: (User & { company_name?: string }) | null = null
     let token: string
 
-    if (isProduction) {
+    // Check at runtime whether to use Supabase (detects production via env vars)
+    if (useSupabase()) {
       // Production: Use Supabase
       const supabase = getSupabase()
 
