@@ -2,16 +2,26 @@ import { NextResponse } from "next/server"
 import { getUserByToken } from "@/lib/auth"
 import { cookies } from "next/headers"
 import { getDb } from "@/lib/db"
+import { isProcoreDevMode } from "@/lib/procore"
+
+interface ProcoreConnection {
+  procore_company_id: number | null
+  procore_company_name: string | null
+  pending_company_selection: number
+  last_sync_at: string | null
+}
 
 // Check environment variables and database for integration status
 export async function GET() {
   try {
     const db = getDb()
     const cookieStore = cookies()
-    const token = cookieStore.get("auth_token")?.value
+    const token = (await cookieStore).get("auth_token")?.value
 
     let microsoftConnection = null
     let googleConnection = null
+    let procoreConnection: ProcoreConnection | null = null
+    let procoreSyncStats: { projectCount: number; vendorCount: number } | null = null
 
     // If authenticated, check for actual OAuth connections
     if (token) {
@@ -35,6 +45,39 @@ export async function GET() {
           `).get(user.company_id) as any
         } catch (e) {
           // Table may not exist yet
+        }
+
+        // Check for Procore connection
+        try {
+          procoreConnection = db.prepare(`
+            SELECT procore_company_id, procore_company_name, pending_company_selection, last_sync_at
+            FROM oauth_connections
+            WHERE company_id = ? AND provider = 'procore'
+          `).get(user.company_id) as ProcoreConnection | null
+        } catch (e) {
+          // Table may not exist yet or column doesn't exist
+        }
+
+        // Get Procore sync stats if connected
+        if (procoreConnection && procoreConnection.procore_company_id) {
+          try {
+            const projectCount = db.prepare(`
+              SELECT COUNT(*) as count FROM procore_mappings
+              WHERE company_id = ? AND procore_entity_type = 'project'
+            `).get(user.company_id) as { count: number }
+
+            const vendorCount = db.prepare(`
+              SELECT COUNT(*) as count FROM procore_mappings
+              WHERE company_id = ? AND procore_entity_type = 'vendor'
+            `).get(user.company_id) as { count: number }
+
+            procoreSyncStats = {
+              projectCount: projectCount?.count || 0,
+              vendorCount: vendorCount?.count || 0
+            }
+          } catch (e) {
+            // procore_mappings table may not exist
+          }
         }
       }
     }
@@ -65,6 +108,12 @@ export async function GET() {
       process.env.TWILIO_PHONE_NUMBER
     )
 
+    // Check Procore dev mode
+    const procoreDevMode = isProcoreDevMode()
+    const isProcoreConnected = procoreConnection &&
+      procoreConnection.procore_company_id &&
+      !procoreConnection.pending_company_selection
+
     return NextResponse.json({
       email: {
         microsoft365: {
@@ -90,6 +139,18 @@ export async function GET() {
         twilio: {
           configured: hasTwilio,
           verified: hasTwilio ? undefined : undefined
+        }
+      },
+      construction: {
+        procore: {
+          connected: !!isProcoreConnected,
+          devMode: procoreDevMode,
+          companyName: procoreConnection?.procore_company_name || undefined,
+          companyId: procoreConnection?.procore_company_id || undefined,
+          pendingCompanySelection: !!procoreConnection?.pending_company_selection,
+          lastSync: procoreConnection?.last_sync_at || undefined,
+          projectCount: procoreSyncStats?.projectCount,
+          vendorCount: procoreSyncStats?.vendorCount
         }
       }
     })

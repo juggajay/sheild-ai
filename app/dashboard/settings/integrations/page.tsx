@@ -15,7 +15,9 @@ import {
   AlertCircle,
   Loader2,
   HardDrive,
-  Cloud
+  Cloud,
+  Building2,
+  Users
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -36,6 +38,18 @@ interface IntegrationStatus {
     bucket: string
     description: string
   }
+  construction?: {
+    procore: {
+      connected: boolean
+      devMode?: boolean
+      companyName?: string
+      companyId?: number
+      pendingCompanySelection?: boolean
+      lastSync?: string
+      projectCount?: number
+      vendorCount?: number
+    }
+  }
 }
 
 export default function IntegrationsPage() {
@@ -52,6 +66,9 @@ export default function IntegrationsPage() {
     communication: {
       sendgrid: { configured: false },
       twilio: { configured: false }
+    },
+    construction: {
+      procore: { connected: false }
     }
   })
   const [testingService, setTestingService] = useState<string | null>(null)
@@ -72,6 +89,18 @@ export default function IntegrationsPage() {
       toast({
         title: "Google Workspace Connected",
         description: "Your Gmail inbox is now connected. Emails with COC attachments will be automatically processed."
+      })
+      router.replace('/dashboard/settings/integrations')
+    } else if (success === 'procore_connected') {
+      toast({
+        title: "Procore Connected",
+        description: "Your Procore account is now connected. You can sync projects and vendors."
+      })
+      router.replace('/dashboard/settings/integrations')
+    } else if (success === 'procore_company_selected') {
+      toast({
+        title: "Procore Company Selected",
+        description: "Your Procore company has been selected. You can now sync projects and vendors."
       })
       router.replace('/dashboard/settings/integrations')
     } else if (error) {
@@ -173,6 +202,37 @@ export default function IntegrationsPage() {
         toast({
           title: "Disconnect Failed",
           description: "Failed to disconnect Google Workspace. Please try again.",
+          variant: "destructive"
+        })
+      }
+    } catch (error) {
+      toast({
+        title: "Disconnect Failed",
+        description: "An error occurred. Please try again.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleConnectProcore = async () => {
+    setConnectingService('procore')
+    // Navigate to Procore OAuth connect endpoint
+    window.location.href = '/api/integrations/procore/connect'
+  }
+
+  const handleDisconnectProcore = async () => {
+    try {
+      const response = await fetch('/api/integrations/procore/disconnect', { method: 'POST' })
+      if (response.ok) {
+        toast({
+          title: "Procore Disconnected",
+          description: "Your Procore account has been disconnected."
+        })
+        fetchIntegrationStatus()
+      } else {
+        toast({
+          title: "Disconnect Failed",
+          description: "Failed to disconnect Procore. Please try again.",
           variant: "destructive"
         })
       }
@@ -697,6 +757,136 @@ export default function IntegrationsPage() {
           </Card>
         </section>
 
+        {/* Construction Management */}
+        <section>
+          <div className="flex items-center gap-2 mb-4">
+            <Building2 className="h-5 w-5 text-orange-500" />
+            <h2 className="text-lg font-semibold text-slate-900">Construction Management</h2>
+          </div>
+          <p className="text-sm text-slate-500 mb-4">
+            Connect construction management platforms to sync projects, vendors, and compliance status.
+          </p>
+
+          <div className="space-y-4">
+            {/* Procore */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-[#F47920] rounded-lg flex items-center justify-center">
+                      <Building2 className="h-5 w-5 text-white" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base">Procore</CardTitle>
+                      <CardDescription>Sync projects and vendors from Procore</CardDescription>
+                    </div>
+                  </div>
+                  <StatusBadge
+                    connected={status.construction?.procore.connected || false}
+                    pendingSelection={status.construction?.procore.pendingCompanySelection}
+                  />
+                </div>
+              </CardHeader>
+              <CardContent>
+                {status.construction?.procore.connected ? (
+                  <div className="space-y-3">
+                    {status.construction.procore.companyName && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-500">Connected company:</span>
+                        <span className="font-medium">{status.construction.procore.companyName}</span>
+                      </div>
+                    )}
+                    {status.construction.procore.devMode && (
+                      <div className="flex items-center gap-2 text-sm text-amber-600">
+                        <AlertCircle className="h-4 w-4" />
+                        Dev mode - using mock data
+                      </div>
+                    )}
+                    {(status.construction.procore.projectCount !== undefined || status.construction.procore.vendorCount !== undefined) && (
+                      <div className="flex items-center gap-4 text-sm text-slate-600">
+                        {status.construction.procore.projectCount !== undefined && (
+                          <span className="flex items-center gap-1">
+                            <Building2 className="h-4 w-4" />
+                            {status.construction.procore.projectCount} projects synced
+                          </span>
+                        )}
+                        {status.construction.procore.vendorCount !== undefined && (
+                          <span className="flex items-center gap-1">
+                            <Users className="h-4 w-4" />
+                            {status.construction.procore.vendorCount} vendors synced
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {status.construction.procore.lastSync && (
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-500">Last synced:</span>
+                        <span>{new Date(status.construction.procore.lastSync).toLocaleString()}</span>
+                      </div>
+                    )}
+                    <div className="flex gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => router.push('/dashboard/settings/integrations/procore')}
+                      >
+                        <Settings2 className="h-4 w-4 mr-2" />
+                        Manage Sync
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={handleDisconnectProcore}
+                      >
+                        Disconnect
+                      </Button>
+                    </div>
+                  </div>
+                ) : status.construction?.procore.pendingCompanySelection ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm text-amber-600">
+                      <AlertCircle className="h-4 w-4" />
+                      Company selection required
+                    </div>
+                    <p className="text-sm text-slate-500">
+                      Your Procore account has multiple companies. Please select which company to use.
+                    </p>
+                    <Button
+                      onClick={() => router.push('/dashboard/settings/integrations/procore/select-company')}
+                    >
+                      Select Company
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-500">
+                      Connect Procore to automatically sync projects and subcontractors.
+                      Compliance status will be pushed back to Procore after verification.
+                    </p>
+                    {status.construction?.procore.devMode && (
+                      <p className="text-xs text-amber-600">
+                        Dev mode: Connection will be simulated without real Procore API credentials.
+                      </p>
+                    )}
+                    <Button
+                      onClick={handleConnectProcore}
+                      disabled={connectingService === 'procore'}
+                    >
+                      {connectingService === 'procore' ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                      )}
+                      Connect Procore
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+
         {/* Help Section */}
         <Card className="bg-slate-50 border-slate-200">
           <CardContent className="pt-6">
@@ -723,7 +913,16 @@ export default function IntegrationsPage() {
   )
 }
 
-function StatusBadge({ connected, verified }: { connected: boolean; verified?: boolean }) {
+function StatusBadge({ connected, verified, pendingSelection }: { connected: boolean; verified?: boolean; pendingSelection?: boolean }) {
+  if (pendingSelection) {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+        <AlertCircle className="h-3 w-3" />
+        Select Company
+      </span>
+    )
+  }
+
   if (connected && verified === false) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
