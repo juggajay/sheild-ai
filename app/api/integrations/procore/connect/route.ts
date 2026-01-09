@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserByToken } from '@/lib/auth'
-import { cookies } from 'next/headers'
-import { getDb } from '@/lib/db'
+import { getUserByToken, getUserByTokenAsync } from '@/lib/auth'
+import { getDb, isProduction, getSupabase } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 import {
   getProcoreConfig,
@@ -17,14 +16,17 @@ import {
  */
 export async function GET(request: NextRequest) {
   try {
-    const cookieStore = cookies()
-    const token = (await cookieStore).get('auth_token')?.value
+    const token = request.cookies.get('auth_token')?.value
 
     if (!token) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const user = await getUserByToken(token)
+    // Get user - use async version for production (Supabase), sync for dev (SQLite)
+    const user = isProduction
+      ? await getUserByTokenAsync(token)
+      : getUserByToken(token)
+
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -34,18 +36,33 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const db = getDb()
     const config = getProcoreConfig()
     const isDevMode = isProcoreDevMode()
 
     // Generate state token for CSRF protection
     const state = uuidv4()
+    const stateId = uuidv4()
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
 
     // Store state in database for verification
-    db.prepare(`
-      INSERT INTO oauth_states (id, user_id, company_id, provider, state, created_at, expires_at)
-      VALUES (?, ?, ?, 'procore', ?, datetime('now'), datetime('now', '+10 minutes'))
-    `).run(uuidv4(), user.id, user.company_id, state)
+    if (isProduction) {
+      const supabase = getSupabase()
+      await supabase.from('oauth_states').insert({
+        id: stateId,
+        user_id: user.id,
+        company_id: user.company_id,
+        provider: 'procore',
+        state,
+        created_at: new Date().toISOString(),
+        expires_at: expiresAt
+      })
+    } else {
+      const db = getDb()
+      db.prepare(`
+        INSERT INTO oauth_states (id, user_id, company_id, provider, state, created_at, expires_at)
+        VALUES (?, ?, ?, 'procore', ?, datetime('now'), datetime('now', '+10 minutes'))
+      `).run(stateId, user.id, user.company_id, state)
+    }
 
     // Dev mode simulation - redirect directly to callback
     if (isDevMode) {

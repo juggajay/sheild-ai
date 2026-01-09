@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { getDb, isProduction, getSupabase } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 import {
   getProcoreConfig,
@@ -40,7 +40,6 @@ interface ProcoreCompanyResponse {
  */
 export async function GET(request: NextRequest) {
   try {
-    const db = getDb()
     const { searchParams } = new URL(request.url)
     const code = searchParams.get('code')
     const state = searchParams.get('state')
@@ -62,21 +61,49 @@ export async function GET(request: NextRequest) {
     }
 
     // Verify state token
-    const stateRecord = db.prepare(`
-      SELECT os.*, u.company_id
-      FROM oauth_states os
-      JOIN users u ON os.user_id = u.id
-      WHERE os.state = ? AND os.provider = 'procore' AND os.expires_at > datetime('now')
-    `).get(state) as OAuthStateRecord | undefined
+    let stateRecord: OAuthStateRecord | undefined
+
+    if (isProduction) {
+      const supabase = getSupabase()
+      const { data } = await supabase
+        .from('oauth_states')
+        .select('*, users!inner(company_id)')
+        .eq('state', state)
+        .eq('provider', 'procore')
+        .gt('expires_at', new Date().toISOString())
+        .single()
+
+      if (data) {
+        stateRecord = {
+          ...data,
+          company_id: data.users?.company_id || data.company_id
+        }
+      }
+
+      // Delete used state
+      if (stateRecord) {
+        await supabase.from('oauth_states').delete().eq('state', state)
+      }
+    } else {
+      const db = getDb()
+      stateRecord = db.prepare(`
+        SELECT os.*, u.company_id
+        FROM oauth_states os
+        JOIN users u ON os.user_id = u.id
+        WHERE os.state = ? AND os.provider = 'procore' AND os.expires_at > datetime('now')
+      `).get(state) as OAuthStateRecord | undefined
+
+      // Delete used state
+      if (stateRecord) {
+        db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state)
+      }
+    }
 
     if (!stateRecord) {
       return NextResponse.redirect(
         new URL('/dashboard/settings/integrations?error=invalid_state', request.url)
       )
     }
-
-    // Delete used state
-    db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state)
 
     const config = getProcoreConfig()
     const isDevMode = isProcoreDevMode()
@@ -150,28 +177,46 @@ export async function GET(request: NextRequest) {
     // Store tokens (with pending company selection if multiple companies)
     const connectionId = uuidv4()
     const hasMultipleCompanies = companies.length > 1
+    const tokenExpiresAt = new Date(Date.now() + (tokens.expires_in || 7200) * 1000).toISOString()
+    const now = new Date().toISOString()
 
     if (hasMultipleCompanies) {
       // Store tokens with pending_company_selection flag
-      db.prepare(`
-        INSERT INTO oauth_connections (
-          id, company_id, provider, access_token, refresh_token,
-          token_expires_at, pending_company_selection, created_at, updated_at
+      if (isProduction) {
+        const supabase = getSupabase()
+        await supabase.from('oauth_connections').upsert({
+          id: connectionId,
+          company_id: stateRecord.company_id,
+          provider: 'procore',
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          token_expires_at: tokenExpiresAt,
+          pending_company_selection: true,
+          created_at: now,
+          updated_at: now
+        }, { onConflict: 'company_id,provider' })
+      } else {
+        const db = getDb()
+        db.prepare(`
+          INSERT INTO oauth_connections (
+            id, company_id, provider, access_token, refresh_token,
+            token_expires_at, pending_company_selection, created_at, updated_at
+          )
+          VALUES (?, ?, 'procore', ?, ?, datetime('now', '+' || ? || ' seconds'), 1, datetime('now'), datetime('now'))
+          ON CONFLICT(company_id, provider) DO UPDATE SET
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            token_expires_at = excluded.token_expires_at,
+            pending_company_selection = 1,
+            updated_at = datetime('now')
+        `).run(
+          connectionId,
+          stateRecord.company_id,
+          tokens.access_token,
+          tokens.refresh_token,
+          tokens.expires_in || 7200
         )
-        VALUES (?, ?, 'procore', ?, ?, datetime('now', '+' || ? || ' seconds'), 1, datetime('now'), datetime('now'))
-        ON CONFLICT(company_id, provider) DO UPDATE SET
-          access_token = excluded.access_token,
-          refresh_token = excluded.refresh_token,
-          token_expires_at = excluded.token_expires_at,
-          pending_company_selection = 1,
-          updated_at = datetime('now')
-      `).run(
-        connectionId,
-        stateRecord.company_id,
-        tokens.access_token,
-        tokens.refresh_token,
-        tokens.expires_in || 7200
-      )
+      }
 
       console.log(`[Procore] OAuth tokens stored for company ${stateRecord.company_id}, pending company selection`)
 
@@ -183,30 +228,48 @@ export async function GET(request: NextRequest) {
       // Single company - complete connection
       const procoreCompany = companies[0]
 
-      db.prepare(`
-        INSERT INTO oauth_connections (
-          id, company_id, provider, access_token, refresh_token,
-          token_expires_at, procore_company_id, procore_company_name,
-          pending_company_selection, created_at, updated_at
+      if (isProduction) {
+        const supabase = getSupabase()
+        await supabase.from('oauth_connections').upsert({
+          id: connectionId,
+          company_id: stateRecord.company_id,
+          provider: 'procore',
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          token_expires_at: tokenExpiresAt,
+          procore_company_id: procoreCompany.id,
+          procore_company_name: procoreCompany.name,
+          pending_company_selection: false,
+          created_at: now,
+          updated_at: now
+        }, { onConflict: 'company_id,provider' })
+      } else {
+        const db = getDb()
+        db.prepare(`
+          INSERT INTO oauth_connections (
+            id, company_id, provider, access_token, refresh_token,
+            token_expires_at, procore_company_id, procore_company_name,
+            pending_company_selection, created_at, updated_at
+          )
+          VALUES (?, ?, 'procore', ?, ?, datetime('now', '+' || ? || ' seconds'), ?, ?, 0, datetime('now'), datetime('now'))
+          ON CONFLICT(company_id, provider) DO UPDATE SET
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            token_expires_at = excluded.token_expires_at,
+            procore_company_id = excluded.procore_company_id,
+            procore_company_name = excluded.procore_company_name,
+            pending_company_selection = 0,
+            updated_at = datetime('now')
+        `).run(
+          connectionId,
+          stateRecord.company_id,
+          tokens.access_token,
+          tokens.refresh_token,
+          tokens.expires_in || 7200,
+          procoreCompany.id,
+          procoreCompany.name
         )
-        VALUES (?, ?, 'procore', ?, ?, datetime('now', '+' || ? || ' seconds'), ?, ?, 0, datetime('now'), datetime('now'))
-        ON CONFLICT(company_id, provider) DO UPDATE SET
-          access_token = excluded.access_token,
-          refresh_token = excluded.refresh_token,
-          token_expires_at = excluded.token_expires_at,
-          procore_company_id = excluded.procore_company_id,
-          procore_company_name = excluded.procore_company_name,
-          pending_company_selection = 0,
-          updated_at = datetime('now')
-      `).run(
-        connectionId,
-        stateRecord.company_id,
-        tokens.access_token,
-        tokens.refresh_token,
-        tokens.expires_in || 7200,
-        procoreCompany.id,
-        procoreCompany.name
-      )
+      }
 
       console.log(`[Procore] Connected to company "${procoreCompany.name}" (ID: ${procoreCompany.id})`)
 
