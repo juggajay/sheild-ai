@@ -65,19 +65,20 @@ export async function GET(request: NextRequest) {
 
     if (isProduction) {
       const supabase = getSupabase()
-      const { data } = await supabase
+      const { data, error: queryError } = await supabase
         .from('oauth_states')
-        .select('*, users!inner(company_id)')
+        .select('*')
         .eq('state', state)
         .eq('provider', 'procore')
         .gt('expires_at', new Date().toISOString())
         .single()
 
+      if (queryError) {
+        console.error('[Procore] State lookup error:', queryError)
+      }
+
       if (data) {
-        stateRecord = {
-          ...data,
-          company_id: data.users?.company_id || data.company_id
-        }
+        stateRecord = data as OAuthStateRecord
       }
 
       // Delete used state
