@@ -201,8 +201,17 @@ export class ProcoreClient {
     }
 
     if (!response.ok) {
-      const error = await response.json() as ProcoreApiError
-      throw new Error(`Procore API error: ${error.error_description || error.error}`)
+      // Try to parse as JSON, but handle HTML error pages gracefully
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const error = await response.json() as ProcoreApiError
+        throw new Error(`Procore API error (${response.status}): ${error.error_description || error.error}`)
+      } else {
+        // HTML or other non-JSON response
+        const text = await response.text()
+        console.error(`[Procore Client] Non-JSON error response (${response.status}):`, text.substring(0, 500))
+        throw new Error(`Procore API error (${response.status}): ${response.statusText || 'Request failed'}`)
+      }
     }
 
     return response.json() as Promise<T>
