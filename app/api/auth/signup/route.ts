@@ -54,6 +54,11 @@ export async function POST(request: NextRequest) {
     // Determine which database to use
     const isSupabase = useSupabase()
 
+    // Debug logging for production issues
+    console.log('Signup - useSupabase:', isSupabase)
+    console.log('Signup - SUPABASE_URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
+    console.log('Signup - SERVICE_KEY exists:', !!process.env.SUPABASE_SERVICE_ROLE_KEY)
+
     // Variables for user/company IDs
     const companyId = uuidv4()
     const userId = uuidv4()
