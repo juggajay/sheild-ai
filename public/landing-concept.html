@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RiskShield AI - The Firewall for Construction</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS (CDN for standalone preview) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        display: ['Space Grotesk', 'sans-serif'],
+                    },
+                    colors: {
+                        slate: {
+                            850: '#151e2e',
+                            900: '#0f172a',
+                            950: '#020617',
+                        },
+                        accent: {
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            glow: '#60a5fa',
+                        }
+                    },
+                    backgroundImage: {
+                        'grid-pattern': "linear-gradient(to right, #1e293b 1px, transparent 1px), linear-gradient(to bottom, #1e293b 1px, transparent 1px)",
+                        'radial-glow': "radial-gradient(circle at center, rgba(59, 130, 246, 0.15) 0%, transparent 70%)",
+                    },
+                    animation: {
+                        'scan': 'scan 4s ease-in-out infinite',
+                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'float': 'float 6s ease-in-out infinite',
+                    },
+                    keyframes: {
+                        scan: {
+                            '0%, 100%': { top: '0%' },
+                            '50%': { top: '100%' },
+                        },
+                        float: {
+                            '0%, 100%': { transform: 'translateY(0)' },
+                            '50%': { transform: 'translateY(-20px)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        /* Custom Utilities */
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .glass-panel-light {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .text-glow {
+            text-shadow: 0 0 20px rgba(59, 130, 246, 0.6);
+        }
+
+        .grid-bg {
+            background-size: 40px 40px;
+            mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+            -webkit-mask-image: linear-gradient(to bottom, black 40%, transparent 100%);
+        }
+
+        /* Hide scrollbar for cleaner look */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #020617; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155; 
+            border-radius: 4px;
+        }
+
+        /* Advanced Animations */
+        @keyframes orb-trace {
+            0% { top: 0%; left: 0%; opacity: 0; }
+            5% { opacity: 1; }
+            25% { top: 0%; left: 100%; }
+            50% { top: 100%; left: 100%; }
+            75% { top: 100%; left: 0%; }
+            95% { opacity: 1; }
+            100% { top: 0%; left: 0%; opacity: 0; }
+        }
+
+        @keyframes ai-flash {
+            0%, 90% { opacity: 0; }
+            92% { opacity: 0.4; background-color: white; }
+            100% { opacity: 0; }
+        }
+
+        @keyframes reveal-data {
+            0%, 92% { opacity: 0; transform: translateY(5px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes reveal-risk {
+            0%, 94% { opacity: 0; transform: scale(0.98); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .animate-orb-trace {
+            animation: orb-trace 4s linear infinite;
+        }
+        .animate-ai-flash {
+            animation: ai-flash 4s ease-out infinite;
+        }
+        .animate-reveal-data {
+            animation: reveal-data 4s ease-out infinite;
+        }
+        .animate-reveal-risk {
+            animation: reveal-risk 4s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-50 antialiased selection:bg-accent-600 selection:text-white overflow-x-hidden">
+
+    <!-- Background Effects -->
+    <div class="fixed inset-0 z-0 pointer-events-none">
+        <div class="absolute inset-0 grid-bg bg-grid-pattern opacity-[0.07]"></div>
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] bg-accent-600/20 blur-[120px] rounded-full mix-blend-screen"></div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="fixed top-0 w-full z-50 transition-all duration-300 border-b border-white/5 bg-slate-950/80 backdrop-blur-md">
+        <div class="container mx-auto px-6 h-20 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="relative">
+                    <div class="absolute inset-0 bg-accent-500 blur-lg opacity-40"></div>
+                    <i data-lucide="shield" class="relative h-6 w-6 text-accent-500 fill-accent-500/20"></i>
+                </div>
+                <span class="font-display font-bold text-xl tracking-tight">RiskShield<span class="text-slate-500">.ai</span></span>
+            </div>
+            
+            <div class="hidden md:flex items-center gap-8 text-sm font-medium text-slate-400">
+                <a href="#" class="hover:text-white transition-colors">Platform</a>
+                <a href="#" class="hover:text-white transition-colors">Intelligence</a>
+                <a href="#" class="hover:text-white transition-colors">Enterprise</a>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <a href="#" class="text-sm font-medium text-slate-400 hover:text-white transition-colors hidden sm:block">Login</a>
+                <a href="#" class="group relative px-6 py-2.5 bg-white text-slate-950 rounded-full font-semibold text-sm hover:bg-slate-200 transition-all overflow-hidden">
+                    <span class="relative z-10 flex items-center gap-2">
+                        Get Audit
+                        <i data-lucide="arrow-right" class="h-4 w-4 transition-transform group-hover:translate-x-1"></i>
+                    </span>
+                    <div class="absolute inset-0 bg-gradient-to-r from-white via-slate-200 to-white opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative z-10 pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
+        <div class="container mx-auto px-6">
+            <div class="max-w-4xl mx-auto text-center mb-20">
+                <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full glass-panel-light border border-accent-500/30 text-accent-400 text-xs font-mono mb-8 animate-fade-in-up">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-accent-500"></span>
+                    </span>
+                    ACTIVE THREAT DETECTION FOR HEAD CONTRACTORS
+                </div>
+                
+                <h1 class="font-display text-5xl md:text-7xl font-bold tracking-tight mb-8 leading-[1.1]">
+                    The <span class="text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-500">Firewall</span> for your <br />
+                    Jobsite Compliance.
+                </h1>
+                
+                <p class="text-xl text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
+                    Stop uninsured subcontractors at the gate. We use military-grade AI to detect <span class="text-white font-medium">Principal Indemnity exclusions</span> and <span class="text-white font-medium">unpaid WorkCover</span> hidden in the fine print.
+                </p>
+
+                <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+                    <button class="w-full sm:w-auto px-8 py-4 bg-accent-600 hover:bg-accent-500 text-white rounded-lg font-semibold text-lg transition-all shadow-[0_0_40px_-10px_rgba(37,99,235,0.5)] hover:shadow-[0_0_60px_-10px_rgba(37,99,235,0.6)]">
+                        Start Risk Scan
+                    </button>
+                    <button class="w-full sm:w-auto px-8 py-4 glass-panel text-white hover:bg-white/5 rounded-lg font-medium text-lg transition-all flex items-center justify-center gap-2">
+                        <i data-lucide="play-circle" class="h-5 w-5 text-slate-400"></i>
+                        Watch Demo
+                    </button>
+                </div>
+            </div>
+
+            <!-- Interface Mockup -->
+            <div class="relative max-w-6xl mx-auto perspective-[2000px]">
+                <!-- Glow behind -->
+                <div class="absolute -inset-10 bg-gradient-to-t from-accent-600/20 to-transparent blur-3xl opacity-50 rounded-[40px]"></div>
+                
+                <!-- Main Dashboard Card -->
+                <div class="relative glass-panel rounded-xl border border-white/10 shadow-2xl overflow-hidden transform rotate-x-[15deg] transition-transform duration-1000 hover:rotate-x-[5deg]">
+                    
+                    <!-- Window Controls -->
+                    <div class="h-12 border-b border-white/10 flex items-center px-4 justify-between bg-slate-900/50">
+                        <div class="flex items-center gap-2">
+                            <div class="h-3 w-3 rounded-full bg-slate-700"></div>
+                            <div class="h-3 w-3 rounded-full bg-slate-700"></div>
+                            <div class="h-3 w-3 rounded-full bg-slate-700"></div>
+                        </div>
+                        <div class="text-xs font-mono text-slate-500 flex items-center gap-2">
+                            <i data-lucide="lock" class="h-3 w-3"></i>
+                            secure_connection_established
+                        </div>
+                    </div>
+
+                    <div class="flex h-[500px]">
+                        <!-- Sidebar -->
+                        <div class="w-64 border-r border-white/5 bg-slate-900/50 p-4 hidden md:block">
+                            <div class="space-y-6">
+                                <div class="space-y-1">
+                                    <div class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Portfolio</div>
+                                    <div class="flex items-center gap-3 px-3 py-2 bg-accent-500/10 text-accent-400 rounded-md border border-accent-500/20">
+                                        <i data-lucide="layout-dashboard" class="h-4 w-4"></i>
+                                        <span class="text-sm font-medium">Morning Brief</span>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3 py-2 text-slate-400 hover:bg-white/5 rounded-md transition-colors">
+                                        <i data-lucide="building-2" class="h-4 w-4"></i>
+                                        <span class="text-sm font-medium">Projects (12)</span>
+                                    </div>
+                                    <div class="flex items-center gap-3 px-3 py-2 text-slate-400 hover:bg-white/5 rounded-md transition-colors">
+                                        <i data-lucide="users" class="h-4 w-4"></i>
+                                        <span class="text-sm font-medium">Subcontractors</span>
+                                    </div>
+                                </div>
+                                
+                                <div class="p-4 rounded-lg bg-red-500/5 border border-red-500/10">
+                                    <div class="text-xs font-bold text-red-400 mb-1">CRITICAL ALERT</div>
+                                    <p class="text-[10px] text-red-300/70 leading-relaxed">
+                                        3 subcontractors on-site today with expired policies.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Main Content -->
+                        <div class="flex-1 bg-slate-950/80 p-6 md:p-8 overflow-hidden relative">
+                            <!-- Background Grid in Dashboard -->
+                            <div class="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:20px_20px]"></div>
+
+                            <div class="relative z-10 h-full flex flex-col">
+                                <div class="flex items-center justify-between mb-8">
+                                    <div>
+                                        <h3 class="font-display text-2xl font-bold">Morning Briefing</h3>
+                                        <p class="text-slate-400 text-sm">Friday, January 9 • 06:00 AM Scan Complete</p>
+                                    </div>
+                                    <div class="flex items-center gap-3">
+                                        <span class="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono">SYSTEM ONLINE</span>
+                                        <span class="px-3 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-400 text-xs font-mono">v2.4.0</span>
+                                    </div>
+                                </div>
+
+                                <!-- AI Document Scanner Visualization -->
+                                <div class="relative flex-1 rounded-xl border border-slate-800 bg-slate-900/50 overflow-hidden flex flex-col md:flex-row">
+                                    
+                                    <!-- Document Preview (Left) -->
+                                    <div class="flex-1 p-8 relative">
+                                        <div class="absolute top-4 right-4 text-xs font-mono text-slate-600">ID: COC-2026-X99</div>
+                                        
+                                        <!-- Document Content Simulation -->
+                                        <div class="space-y-6 max-w-md relative z-10">
+                                            <!-- Section 1 -->
+                                            <div class="animate-reveal-data">
+                                                <div class="h-2 w-24 bg-slate-800 rounded mb-2"></div>
+                                                <div class="flex items-center gap-3">
+                                                    <div class="h-3 w-48 bg-slate-700 rounded"></div>
+                                                    <div class="px-2 py-0.5 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-[10px] font-mono rounded">
+                                                        ✓ VALID_ENTITY
+                                                     </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Section 2 -->
+                                            <div class="animate-reveal-data" style="animation-delay: 0.2s;">
+                                                <div class="h-2 w-32 bg-slate-800 rounded mb-2"></div>
+                                                <div class="h-3 w-3/4 bg-slate-700 rounded"></div>
+                                                <div class="h-3 w-1/2 bg-slate-700 rounded mt-2"></div>
+                                            </div>
+
+                                            <!-- Section 3 (The Risk) -->
+                                            <div class="pt-4 animate-reveal-risk">
+                                                <div class="h-2 w-20 bg-slate-800 rounded mb-2"></div>
+                                                <div class="p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center justify-between">
+                                                    <div class="space-y-1">
+                                                        <div class="h-3 w-40 bg-red-400/30 rounded"></div>
+                                                        <div class="text-[10px] text-red-400 font-mono">Principal Indemnity Missing</div>
+                                                    </div>
+                                                    <i data-lucide="alert-circle" class="h-4 w-4 text-red-500"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- The AI Orb (Subtle Tracer) -->
+                                        <div class="absolute inset-0 z-20 pointer-events-none">
+                                            <div class="absolute h-3 w-3 bg-accent-400 rounded-full blur-[4px] shadow-[0_0_15px_rgba(59,130,246,1)] animate-orb-trace"></div>
+                                        </div>
+
+                                        <!-- Subtle White Flash Overlay -->
+                                        <div class="absolute inset-0 z-30 pointer-events-none animate-ai-flash"></div>
+                                    </div>
+
+                                    <!-- Analysis Log (Right) -->
+                                    <div class="w-72 border-l border-white/5 bg-slate-950/30 p-4 font-mono text-xs hidden md:block">
+                                        <div class="text-slate-500 mb-4 pb-2 border-b border-white/5">Execution Log</div>
+                                        <div class="space-y-3">
+                                            <div class="flex gap-2 text-emerald-500 animate-reveal-data">
+                                                <span>></span>
+                                                <span class="text-emerald-300">Entity: Verified</span>
+                                            </div>
+                                            <div class="flex gap-2 text-emerald-500 animate-reveal-data" style="animation-delay: 0.1s;">
+                                                <span>></span>
+                                                <span class="text-emerald-300">Limit: $20,000,000 OK</span>
+                                            </div>
+                                            <div class="flex gap-2 text-red-500 animate-reveal-data" style="animation-delay: 0.3s;">
+                                                <span>></span>
+                                                <span class="text-red-400">Risk: Indemnity Breach</span>
+                                            </div>
+                                            <div class="mt-4 p-2 bg-slate-800 rounded text-slate-400 animate-reveal-data" style="animation-delay: 0.4s;">
+                                                Status: <span class="text-red-400 font-bold">REJECTED</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- The Problem (Bento Grid) -->
+    <section class="py-24 bg-slate-900/50 border-t border-white/5">
+        <div class="container mx-auto px-6">
+            <div class="text-center mb-16">
+                <h2 class="font-display text-3xl md:text-4xl font-bold mb-4">The "Corporate Veil" is thinner than you think.</h2>
+                <p class="text-slate-400">Manual verification leaves you exposed to 3 catastrophic risks.</p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Card 1 -->
+                <div class="group glass-panel p-8 rounded-2xl hover:bg-white/5 transition-all duration-500 hover:-translate-y-1">
+                    <div class="h-12 w-12 rounded-lg bg-red-500/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="siren" class="h-6 w-6 text-red-500"></i>
+                    </div>
+                    <h3 class="font-display text-xl font-bold mb-3">Deemed Employer Liability</h3>
+                    <p class="text-slate-400 leading-relaxed text-sm">
+                        If a subcontractor hasn't paid their WorkCover, <span class="text-white">you become the employer</span> when an injury happens. We check payment status directly with state schemes.
+                    </p>
+                </div>
+
+                <!-- Card 2 -->
+                <div class="group glass-panel p-8 rounded-2xl hover:bg-white/5 transition-all duration-500 hover:-translate-y-1">
+                    <div class="h-12 w-12 rounded-lg bg-amber-500/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="file-warning" class="h-6 w-6 text-amber-500"></i>
+                    </div>
+                    <h3 class="font-display text-xl font-bold mb-3">The "Welding" Exclusion</h3>
+                    <p class="text-slate-400 leading-relaxed text-sm">
+                        A $20M policy is worthless if it excludes "Hot Work." Our AI reads the 40-page PDS to find specific exclusions relevant to your trade.
+                    </p>
+                </div>
+
+                <!-- Card 3 -->
+                <div class="group glass-panel p-8 rounded-2xl hover:bg-white/5 transition-all duration-500 hover:-translate-y-1">
+                    <div class="h-12 w-12 rounded-lg bg-indigo-500/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                        <i data-lucide="gavel" class="h-6 w-6 text-indigo-500"></i>
+                    </div>
+                    <h3 class="font-display text-xl font-bold mb-3">Industrial Manslaughter</h3>
+                    <p class="text-slate-400 leading-relaxed text-sm">
+                        Legislation in QLD and VIC puts directors in jail for negligence. An auditable, AI-verified paper trail is your best defense.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technical Specs -->
+    <section class="py-24 relative overflow-hidden">
+        <!-- Decoration -->
+        <div class="absolute right-0 top-1/2 -translate-y-1/2 w-1/3 h-full bg-gradient-to-l from-accent-900/10 to-transparent"></div>
+
+        <div class="container mx-auto px-6 flex flex-col md:flex-row gap-16 items-center">
+            <div class="w-full md:w-1/2">
+                <div class="text-accent-500 font-mono text-xs mb-4">/// SPECIFICATIONS</div>
+                <h2 class="font-display text-4xl font-bold mb-6">Engineered for <br />Australian Legislation.</h2>
+                <div class="space-y-8">
+                    <div class="flex gap-4">
+                        <div class="mt-1">
+                            <div class="h-6 w-6 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                                <i data-lucide="check" class="h-3 w-3 text-emerald-400"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-white text-lg">Workers Comp State Matching</h4>
+                            <p class="text-slate-400 text-sm mt-1">Automatic state scheme detection and project location matching for all Australian states.</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-4">
+                        <div class="mt-1">
+                            <div class="h-6 w-6 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                                <i data-lucide="check" class="h-3 w-3 text-emerald-400"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-white text-lg">AS 4000 Contract Matching</h4>
+                            <p class="text-slate-400 text-sm mt-1">We parse your head contract requirements and match every sub's policy against them.</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-4">
+                        <div class="mt-1">
+                            <div class="h-6 w-6 rounded-full bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20">
+                                <i data-lucide="check" class="h-3 w-3 text-emerald-400"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-white text-lg">Phoenix Detection</h4>
+                            <p class="text-slate-400 text-sm mt-1">We flag when the "Insured Entity" doesn't match the "Contract Entity" (ABN mismatch).</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="w-full md:w-1/2">
+                <div class="relative rounded-2xl border border-white/10 bg-slate-900/80 p-8 backdrop-blur-sm">
+                    <div class="absolute -top-4 -right-4 bg-accent-600 text-white px-4 py-1 rounded text-xs font-bold font-mono tracking-wider shadow-lg">
+                        LIVE_FEED
+                    </div>
+                    <div class="space-y-4 font-mono text-sm">
+                        <div class="flex items-center gap-4 text-slate-500 border-b border-white/5 pb-2">
+                            <span class="w-20">09:14:22</span>
+                            <span class="text-emerald-400">SCAN_COMPLETE</span>
+                            <span class="text-white">Metro_Civil_Liability.pdf</span>
+                        </div>
+                        <div class="flex items-center gap-4 text-slate-500 border-b border-white/5 pb-2">
+                            <span class="w-20">09:14:25</span>
+                            <span class="text-emerald-400">SCAN_COMPLETE</span>
+                            <span class="text-white">J_Smith_WorkCover.pdf</span>
+                        </div>
+                        <div class="flex items-center gap-4 text-slate-500 border-b border-white/5 pb-2">
+                            <span class="w-20">09:15:01</span>
+                            <span class="text-red-400">RISK_DETECTED</span>
+                            <span class="text-white">Electrical_Systems_Pty_Ltd</span>
+                        </div>
+                        <div class="pl-24 text-xs text-red-300">
+                            > Error: Policy expires in 2 days (requires 30 days)
+                            <br>> Action: Broker notified automatically.
+                        </div>
+                        <div class="flex items-center gap-4 text-slate-500 pt-2">
+                            <span class="w-20">09:15:10</span>
+                            <span class="text-accent-400 animate-pulse">PROCESSING...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/5 bg-slate-950 py-12">
+        <div class="container mx-auto px-6">
+            <div class="flex flex-col md:flex-row justify-between items-center gap-6">
+                <div class="flex items-center gap-2">
+                    <i data-lucide="shield" class="h-5 w-5 text-slate-600"></i>
+                    <span class="font-display font-bold text-slate-600">RiskShield AI</span>
+                </div>
+                <div class="text-slate-600 text-sm">
+                    &copy; 2026 RiskShield AI. Sydney, Australia.
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Initialize Icons -->
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>
