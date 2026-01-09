@@ -1,7 +1,6 @@
-import { NextResponse } from "next/server"
-import { getUserByToken } from "@/lib/auth"
-import { cookies } from "next/headers"
-import { getDb } from "@/lib/db"
+import { NextRequest, NextResponse } from "next/server"
+import { getUserByToken, getUserByTokenAsync } from "@/lib/auth"
+import { getDb, isProduction, getSupabase } from "@/lib/db"
 import { isProcoreDevMode } from "@/lib/procore"
 
 interface ProcoreConnection {
@@ -12,11 +11,9 @@ interface ProcoreConnection {
 }
 
 // Check environment variables and database for integration status
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const db = getDb()
-    const cookieStore = cookies()
-    const token = (await cookieStore).get("auth_token")?.value
+    const token = request.cookies.get("auth_token")?.value
 
     let microsoftConnection = null
     let googleConnection = null
@@ -25,58 +22,135 @@ export async function GET() {
 
     // If authenticated, check for actual OAuth connections
     if (token) {
-      const user = await getUserByToken(token)
+      // Get user - use async version for production (Supabase), sync for dev (SQLite)
+      const user = isProduction
+        ? await getUserByTokenAsync(token)
+        : getUserByToken(token)
+
       if (user && user.company_id) {
-        // Check for Microsoft 365 connection
-        try {
-          microsoftConnection = db.prepare(`
-            SELECT email, last_sync_at FROM oauth_connections
-            WHERE company_id = ? AND provider = 'microsoft'
-          `).get(user.company_id) as any
-        } catch (e) {
-          // Table may not exist yet
-        }
+        if (isProduction) {
+          // Production: Use Supabase
+          const supabase = getSupabase()
 
-        // Check for Google connection
-        try {
-          googleConnection = db.prepare(`
-            SELECT email, last_sync_at FROM oauth_connections
-            WHERE company_id = ? AND provider = 'google'
-          `).get(user.company_id) as any
-        } catch (e) {
-          // Table may not exist yet
-        }
-
-        // Check for Procore connection
-        try {
-          procoreConnection = db.prepare(`
-            SELECT procore_company_id, procore_company_name, pending_company_selection, last_sync_at
-            FROM oauth_connections
-            WHERE company_id = ? AND provider = 'procore'
-          `).get(user.company_id) as ProcoreConnection | null
-        } catch (e) {
-          // Table may not exist yet or column doesn't exist
-        }
-
-        // Get Procore sync stats if connected
-        if (procoreConnection && procoreConnection.procore_company_id) {
+          // Check for Microsoft 365 connection
           try {
-            const projectCount = db.prepare(`
-              SELECT COUNT(*) as count FROM procore_mappings
-              WHERE company_id = ? AND procore_entity_type = 'project'
-            `).get(user.company_id) as { count: number }
+            const { data } = await supabase
+              .from('oauth_connections')
+              .select('email, last_sync_at')
+              .eq('company_id', user.company_id)
+              .eq('provider', 'microsoft')
+              .single()
+            microsoftConnection = data
+          } catch (e) {
+            // Table may not exist yet or no connection
+          }
 
-            const vendorCount = db.prepare(`
-              SELECT COUNT(*) as count FROM procore_mappings
-              WHERE company_id = ? AND procore_entity_type = 'vendor'
-            `).get(user.company_id) as { count: number }
+          // Check for Google connection
+          try {
+            const { data } = await supabase
+              .from('oauth_connections')
+              .select('email, last_sync_at')
+              .eq('company_id', user.company_id)
+              .eq('provider', 'google')
+              .single()
+            googleConnection = data
+          } catch (e) {
+            // Table may not exist yet or no connection
+          }
 
-            procoreSyncStats = {
-              projectCount: projectCount?.count || 0,
-              vendorCount: vendorCount?.count || 0
+          // Check for Procore connection
+          try {
+            const { data } = await supabase
+              .from('oauth_connections')
+              .select('procore_company_id, procore_company_name, pending_company_selection, last_sync_at')
+              .eq('company_id', user.company_id)
+              .eq('provider', 'procore')
+              .single()
+            if (data) {
+              procoreConnection = data as ProcoreConnection
             }
           } catch (e) {
-            // procore_mappings table may not exist
+            // Table may not exist yet or no connection
+          }
+
+          // Get Procore sync stats if connected
+          if (procoreConnection && procoreConnection.procore_company_id) {
+            try {
+              const { count: projectCount } = await supabase
+                .from('procore_mappings')
+                .select('*', { count: 'exact', head: true })
+                .eq('company_id', user.company_id)
+                .eq('procore_entity_type', 'project')
+
+              const { count: vendorCount } = await supabase
+                .from('procore_mappings')
+                .select('*', { count: 'exact', head: true })
+                .eq('company_id', user.company_id)
+                .eq('procore_entity_type', 'vendor')
+
+              procoreSyncStats = {
+                projectCount: projectCount || 0,
+                vendorCount: vendorCount || 0
+              }
+            } catch (e) {
+              // procore_mappings table may not exist
+            }
+          }
+        } else {
+          // Development: Use SQLite
+          const db = getDb()
+
+          // Check for Microsoft 365 connection
+          try {
+            microsoftConnection = db.prepare(`
+              SELECT email, last_sync_at FROM oauth_connections
+              WHERE company_id = ? AND provider = 'microsoft'
+            `).get(user.company_id) as any
+          } catch (e) {
+            // Table may not exist yet
+          }
+
+          // Check for Google connection
+          try {
+            googleConnection = db.prepare(`
+              SELECT email, last_sync_at FROM oauth_connections
+              WHERE company_id = ? AND provider = 'google'
+            `).get(user.company_id) as any
+          } catch (e) {
+            // Table may not exist yet
+          }
+
+          // Check for Procore connection
+          try {
+            procoreConnection = db.prepare(`
+              SELECT procore_company_id, procore_company_name, pending_company_selection, last_sync_at
+              FROM oauth_connections
+              WHERE company_id = ? AND provider = 'procore'
+            `).get(user.company_id) as ProcoreConnection | null
+          } catch (e) {
+            // Table may not exist yet or column doesn't exist
+          }
+
+          // Get Procore sync stats if connected
+          if (procoreConnection && procoreConnection.procore_company_id) {
+            try {
+              const projectCount = db.prepare(`
+                SELECT COUNT(*) as count FROM procore_mappings
+                WHERE company_id = ? AND procore_entity_type = 'project'
+              `).get(user.company_id) as { count: number }
+
+              const vendorCount = db.prepare(`
+                SELECT COUNT(*) as count FROM procore_mappings
+                WHERE company_id = ? AND procore_entity_type = 'vendor'
+              `).get(user.company_id) as { count: number }
+
+              procoreSyncStats = {
+                projectCount: projectCount?.count || 0,
+                vendorCount: vendorCount?.count || 0
+              }
+            } catch (e) {
+              // procore_mappings table may not exist
+            }
           }
         }
       }
