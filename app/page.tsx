@@ -71,7 +71,7 @@ export default function Home() {
             </h1>
             
             <p className="text-xl text-slate-400 mb-10 max-w-2xl mx-auto leading-relaxed">
-              Stop uninsured subcontractors at the gate. We use military-grade AI to detect <span className="text-white font-medium">Principal Indemnity exclusions</span> and <span class="text-white font-medium">unpaid WorkCover</span> hidden in the fine print.
+              Stop uninsured subcontractors at the gate. We use military-grade AI to detect <span className="text-white font-medium">Principal Indemnity exclusions</span> and <span className="text-white font-medium">unpaid WorkCover</span> hidden in the fine print.
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -336,13 +336,13 @@ export default function Home() {
                 </div>
                 <div className="flex items-center gap-4 text-slate-500 border-b border-white/5 pb-2">
                   <span className="w-20">09:14:25</span>
-                  <span class="text-emerald-400">SCAN_COMPLETE</span>
-                  <span class="text-white">J_Smith_WorkCover.pdf</span>
+                  <span className="text-emerald-400">SCAN_COMPLETE</span>
+                  <span className="text-white">J_Smith_WorkCover.pdf</span>
                 </div>
                 <div className="flex items-center gap-4 text-slate-500 border-b border-white/5 pb-2">
                   <span className="w-20">09:15:01</span>
-                  <span class="text-red-400">RISK_DETECTED</span>
-                  <span class="text-white">Electrical_Systems_Pty_Ltd</span>
+                  <span className="text-red-400">RISK_DETECTED</span>
+                  <span className="text-white">Electrical_Systems_Pty_Ltd</span>
                 </div>
                 <div className="pl-24 text-xs text-red-300">
                   {'>'} Error: Policy expires in 2 days (requires 30 days)
