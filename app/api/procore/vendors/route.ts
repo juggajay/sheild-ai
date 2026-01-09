@@ -272,8 +272,9 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('Procore vendors error:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     return NextResponse.json(
-      { error: 'Failed to fetch Procore vendors' },
+      { error: 'Failed to fetch Procore vendors', details: errorMessage },
       { status: 500 }
     )
   }
