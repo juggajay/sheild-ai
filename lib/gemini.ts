@@ -584,3 +584,340 @@ export function shouldSkipFraudDetection(filename: string, searchParams?: URLSea
   // Default: run fraud detection
   return false
 }
+
+// ============================================================================
+// Contract Parsing Types
+// ============================================================================
+
+export interface ExtractedContractRequirement {
+  coverage_type: 'public_liability' | 'products_liability' | 'workers_comp' | 'professional_indemnity' | 'motor_vehicle' | 'contract_works'
+  minimum_limit: number | null
+  maximum_excess: number | null
+  principal_indemnity_required: boolean
+  cross_liability_required: boolean
+  waiver_of_subrogation_required: boolean
+  notes: string | null
+}
+
+export interface ExtractedContractClause {
+  clause_number: string | null
+  clause_title: string
+  clause_text: string
+  related_coverage: string | null
+}
+
+export interface ContractExtractionResult {
+  success: boolean
+  requirements: ExtractedContractRequirement[]
+  extracted_clauses: ExtractedContractClause[]
+  confidence_score: number
+  warnings: string[]
+  contract_type?: string
+  estimated_value?: number
+  error?: {
+    code: string
+    message: string
+  }
+  extractionModel: string
+  extractionTimestamp: string
+}
+
+// ============================================================================
+// Contract Extraction Prompt
+// ============================================================================
+
+const CONTRACT_EXTRACTION_PROMPT = `You are an expert construction contract analyst specializing in Australian construction contracts and insurance requirements.
+
+Analyze the provided construction contract document and extract all insurance requirements that subcontractors must meet.
+
+IMPORTANT EXTRACTION RULES:
+1. Look for insurance clauses, typically in sections titled "Insurance", "Risk and Insurance", "Contractor's Insurance", or similar
+2. Extract specific coverage requirements including:
+   - Minimum coverage limits (convert to AUD numbers without $ or commas)
+   - Maximum excess/deductible amounts
+   - Required endorsements (Principal Indemnity, Cross Liability, Waiver of Subrogation)
+3. Identify the clause numbers and exact text where requirements are stated
+4. Note any special conditions or trade-specific requirements
+5. Provide confidence scores based on how clearly requirements were stated
+
+COVERAGE TYPE MAPPING:
+- "Public Liability", "General Liability", "Third Party Liability" → public_liability
+- "Products Liability", "Product Liability" → products_liability
+- "Workers Compensation", "WorkCover", "Workers' Comp" → workers_comp
+- "Professional Indemnity", "PI Insurance", "Errors & Omissions", "E&O" → professional_indemnity
+- "Motor Vehicle", "Fleet Insurance", "Vehicle Insurance" → motor_vehicle
+- "Contract Works", "Construction All Risk", "CAR Insurance", "Principal Arranged" → contract_works
+
+AUSTRALIAN STANDARD AMOUNTS:
+- $5,000,000 = 5000000
+- $10,000,000 = 10000000
+- $20,000,000 = 20000000
+- Note: "5 million", "$5M", "5,000,000" all = 5000000
+
+Return ONLY valid JSON in this exact structure (no markdown, no explanation):
+
+{
+  "requirements": [
+    {
+      "coverage_type": "public_liability | products_liability | workers_comp | professional_indemnity | motor_vehicle | contract_works",
+      "minimum_limit": number or null,
+      "maximum_excess": number or null,
+      "principal_indemnity_required": boolean,
+      "cross_liability_required": boolean,
+      "waiver_of_subrogation_required": boolean,
+      "notes": "string or null - any special conditions"
+    }
+  ],
+  "extracted_clauses": [
+    {
+      "clause_number": "string or null - e.g., '15.1', 'Schedule B Item 3'",
+      "clause_title": "string - e.g., 'Insurance Requirements'",
+      "clause_text": "string - exact or summarized clause text",
+      "related_coverage": "string or null - which coverage type this relates to"
+    }
+  ],
+  "contract_type": "string - e.g., 'AS4000', 'AS2124', 'ABIC MW', 'Custom', 'Unknown'",
+  "estimated_value": number or null - contract value if mentioned,
+  "confidence_score": number 0-1 - overall extraction confidence,
+  "warnings": ["array of strings - any issues or ambiguities found"]
+}
+
+If the document is not a construction contract or contains no insurance requirements, return:
+{
+  "requirements": [],
+  "extracted_clauses": [],
+  "contract_type": "Unknown",
+  "estimated_value": null,
+  "confidence_score": 0,
+  "warnings": ["No insurance requirements found in document. This may not be a construction contract or the insurance section is missing."],
+  "error": {
+    "code": "NO_REQUIREMENTS",
+    "message": "Could not identify insurance requirements in this document"
+  }
+}
+
+If the document is unreadable or corrupted, return:
+{
+  "requirements": [],
+  "extracted_clauses": [],
+  "contract_type": null,
+  "estimated_value": null,
+  "confidence_score": 0,
+  "warnings": [],
+  "error": {
+    "code": "UNREADABLE",
+    "message": "Brief description of why extraction failed"
+  }
+}
+`
+
+// ============================================================================
+// Contract Extraction Function
+// ============================================================================
+
+/**
+ * Extract insurance requirements from a construction contract using Gemini
+ */
+export async function extractContractRequirements(
+  fileBuffer: Buffer,
+  mimeType: string,
+  filename: string
+): Promise<ContractExtractionResult> {
+  const startTime = Date.now()
+
+  try {
+    const gemini = getGeminiClient()
+
+    // Validate mime type - contracts are typically PDF or Word docs
+    const supportedTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/gif',
+      'image/webp'
+    ]
+
+    if (!supportedTypes.includes(mimeType)) {
+      return {
+        success: false,
+        requirements: [],
+        extracted_clauses: [],
+        confidence_score: 0,
+        warnings: [`Unsupported file type: ${mimeType}`],
+        error: {
+          code: 'INVALID_FORMAT',
+          message: `Unsupported file type: ${mimeType}. Please upload a PDF or image file.`
+        },
+        extractionModel: GEMINI_MODEL,
+        extractionTimestamp: new Date().toISOString()
+      }
+    }
+
+    // Convert buffer to base64 for Gemini
+    const base64Data = fileBuffer.toString('base64')
+
+    // Create the document part for Gemini
+    const documentPart: Part = {
+      inlineData: {
+        mimeType: mimeType,
+        data: base64Data
+      }
+    }
+
+    // Call Gemini API
+    const result = await gemini.generateContent([
+      CONTRACT_EXTRACTION_PROMPT,
+      documentPart
+    ])
+
+    const response = result.response
+    const text = response.text()
+
+    // Parse the JSON response
+    let extractedJson: Record<string, unknown>
+    try {
+      // Clean up the response - remove any markdown code blocks if present
+      let cleanedText = text.trim()
+      if (cleanedText.startsWith('```json')) {
+        cleanedText = cleanedText.slice(7)
+      }
+      if (cleanedText.startsWith('```')) {
+        cleanedText = cleanedText.slice(3)
+      }
+      if (cleanedText.endsWith('```')) {
+        cleanedText = cleanedText.slice(0, -3)
+      }
+      cleanedText = cleanedText.trim()
+
+      extractedJson = JSON.parse(cleanedText)
+    } catch (parseError) {
+      console.error('[Gemini Contract] Failed to parse response:', text)
+      return {
+        success: false,
+        requirements: [],
+        extracted_clauses: [],
+        confidence_score: 0,
+        warnings: ['Failed to parse AI response'],
+        error: {
+          code: 'PARSE_ERROR',
+          message: 'Failed to parse extracted data from contract. Please try again.'
+        },
+        extractionModel: GEMINI_MODEL,
+        extractionTimestamp: new Date().toISOString()
+      }
+    }
+
+    // Check if Gemini returned an error
+    if (extractedJson.error) {
+      const error = extractedJson.error as Record<string, string>
+      return {
+        success: false,
+        requirements: [],
+        extracted_clauses: [],
+        confidence_score: 0,
+        warnings: (extractedJson.warnings as string[]) || [],
+        error: {
+          code: error.code || 'EXTRACTION_ERROR',
+          message: error.message || 'Could not extract requirements from contract'
+        },
+        extractionModel: GEMINI_MODEL,
+        extractionTimestamp: new Date().toISOString()
+      }
+    }
+
+    // Convert and validate requirements
+    const requirements = (extractedJson.requirements as Record<string, unknown>[] || [])
+      .map(req => ({
+        coverage_type: req.coverage_type as ExtractedContractRequirement['coverage_type'],
+        minimum_limit: typeof req.minimum_limit === 'number' ? req.minimum_limit : null,
+        maximum_excess: typeof req.maximum_excess === 'number' ? req.maximum_excess : null,
+        principal_indemnity_required: Boolean(req.principal_indemnity_required),
+        cross_liability_required: Boolean(req.cross_liability_required),
+        waiver_of_subrogation_required: Boolean(req.waiver_of_subrogation_required),
+        notes: req.notes ? String(req.notes) : null
+      }))
+      .filter(req => ['public_liability', 'products_liability', 'workers_comp', 'professional_indemnity', 'motor_vehicle', 'contract_works'].includes(req.coverage_type))
+
+    // Convert clauses
+    const extracted_clauses = (extractedJson.extracted_clauses as Record<string, unknown>[] || [])
+      .map(clause => ({
+        clause_number: clause.clause_number ? String(clause.clause_number) : null,
+        clause_title: String(clause.clause_title || 'Untitled'),
+        clause_text: String(clause.clause_text || ''),
+        related_coverage: clause.related_coverage ? String(clause.related_coverage) : null
+      }))
+
+    const confidenceScore = typeof extractedJson.confidence_score === 'number'
+      ? extractedJson.confidence_score
+      : 0.5
+
+    console.log(`[Gemini Contract] Extraction completed in ${Date.now() - startTime}ms, found ${requirements.length} requirements, confidence: ${(confidenceScore * 100).toFixed(1)}%`)
+
+    return {
+      success: true,
+      requirements,
+      extracted_clauses,
+      confidence_score: confidenceScore,
+      warnings: (extractedJson.warnings as string[]) || [],
+      contract_type: extractedJson.contract_type ? String(extractedJson.contract_type) : undefined,
+      estimated_value: typeof extractedJson.estimated_value === 'number' ? extractedJson.estimated_value : undefined,
+      extractionModel: GEMINI_MODEL,
+      extractionTimestamp: new Date().toISOString()
+    }
+
+  } catch (error) {
+    console.error('[Gemini Contract] Extraction error:', error)
+
+    // Handle specific error types
+    if (error instanceof Error) {
+      // Rate limiting
+      if (error.message.includes('429') || error.message.toLowerCase().includes('rate limit')) {
+        return {
+          success: false,
+          requirements: [],
+          extracted_clauses: [],
+          confidence_score: 0,
+          warnings: [],
+          error: {
+            code: 'RATE_LIMITED',
+            message: 'Service is temporarily busy. Please try again in a few moments.'
+          },
+          extractionModel: GEMINI_MODEL,
+          extractionTimestamp: new Date().toISOString()
+        }
+      }
+
+      // API errors
+      if (error.message.includes('API') || error.message.includes('network')) {
+        return {
+          success: false,
+          requirements: [],
+          extracted_clauses: [],
+          confidence_score: 0,
+          warnings: [],
+          error: {
+            code: 'API_ERROR',
+            message: 'Failed to connect to AI service. Please try again.'
+          },
+          extractionModel: GEMINI_MODEL,
+          extractionTimestamp: new Date().toISOString()
+        }
+      }
+    }
+
+    // Generic error
+    return {
+      success: false,
+      requirements: [],
+      extracted_clauses: [],
+      confidence_score: 0,
+      warnings: [],
+      error: {
+        code: 'API_ERROR',
+        message: 'An unexpected error occurred during contract extraction.'
+      },
+      extractionModel: GEMINI_MODEL,
+      extractionTimestamp: new Date().toISOString()
+    }
+  }
+}
