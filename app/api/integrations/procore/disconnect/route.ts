@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import { getDb } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 /**
  * POST /api/integrations/procore/disconnect
  *
  * Disconnects the Procore integration for the user's company.
- * Removes OAuth tokens and optionally clears sync mappings.
+ * Removes OAuth tokens and pauses sync mappings.
  */
 export async function POST() {
   try {
@@ -29,45 +32,28 @@ export async function POST() {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const db = getDb()
+    // Delete connection (also pauses mappings)
+    const result = await convex.mutation(api.integrations.deleteConnection, {
+      companyId: user.company_id as Id<"companies">,
+      provider: 'procore',
+    })
 
-    // Get connection details for audit log
-    const connection = db.prepare(`
-      SELECT procore_company_id, procore_company_name
-      FROM oauth_connections
-      WHERE company_id = ? AND provider = 'procore'
-    `).get(user.company_id) as { procore_company_id: number | null; procore_company_name: string | null } | undefined
-
-    // Delete the OAuth connection
-    const result = db.prepare(`
-      DELETE FROM oauth_connections
-      WHERE company_id = ? AND provider = 'procore'
-    `).run(user.company_id)
-
-    if (result.changes === 0) {
+    if (!result.deleted) {
       return NextResponse.json({ error: 'No Procore connection found' }, { status: 404 })
     }
 
-    // Optionally clear sync mappings (mark as paused, don't delete)
-    db.prepare(`
-      UPDATE procore_mappings
-      SET sync_status = 'paused', updated_at = datetime('now')
-      WHERE company_id = ?
-    `).run(user.company_id)
-
     // Create audit log entry
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'integration', 'procore', 'disconnect', ?)
-    `).run(
-      uuidv4(),
-      user.company_id,
-      user.id,
-      JSON.stringify({
-        procore_company_id: connection?.procore_company_id,
-        procore_company_name: connection?.procore_company_name,
-      })
-    )
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'integration',
+      entityId: 'procore',
+      action: 'disconnect',
+      details: {
+        procore_company_id: result.connection?.procoreCompanyId,
+        procore_company_name: result.connection?.procoreCompanyName,
+      },
+    })
 
     console.log(`[Procore] Disconnected for Shield-AI company ${user.company_id}`)
 

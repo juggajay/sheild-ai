@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb, type Project } from '@/lib/db'
-import { getUserByToken } from '@/lib/auth'
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 import { extractContractRequirements } from '@/lib/gemini'
 import fs from 'fs'
 import path from 'path'
+import { v4 as uuidv4 } from 'uuid'
 
 // Valid coverage types that can be extracted from contracts
 const VALID_COVERAGE_TYPES = [
@@ -14,29 +14,14 @@ const VALID_COVERAGE_TYPES = [
   'professional_indemnity',
   'motor_vehicle',
   'contract_works'
-]
+] as const
 
-// Helper function to check if user can access project
-function canAccessProject(user: { id: string; company_id: string | null; role: string }, project: Project): boolean {
-  if (project.company_id !== user.company_id) {
-    return false
-  }
-
-  if (['admin', 'risk_manager', 'read_only'].includes(user.role)) {
-    return true
-  }
-
-  if (['project_manager', 'project_administrator'].includes(user.role)) {
-    return project.project_manager_id === user.id
-  }
-
-  return false
-}
+type CoverageType = typeof VALID_COVERAGE_TYPES[number]
 
 // POST /api/projects/[id]/parse-contract - Upload and parse a contract for insurance requirements
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -45,9 +30,17 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only admin and risk_manager can parse contracts and set requirements
@@ -55,14 +48,17 @@ export async function POST(
       return NextResponse.json({ error: 'Only admins and risk managers can parse contracts' }, { status: 403 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
+    const { id } = await params
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
@@ -132,22 +128,26 @@ export async function POST(
     const extraction = await extractContractRequirements(buffer, mimeType, file.name)
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'project', ?, 'parse_contract', ?)
-    `).run(uuidv4(), user.company_id, user.id, params.id, JSON.stringify({
-      fileName: file.name,
-      fileSize: file.size,
-      fileUrl,
-      requirementsExtracted: extraction.requirements.length,
-      clausesExtracted: extraction.extracted_clauses.length,
-      confidenceScore: extraction.confidence_score,
-      contractType: extraction.contract_type,
-      extractionModel: extraction.extractionModel,
-      autoApply,
-      success: extraction.success,
-      error: extraction.error
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.companyId,
+      userId: user._id,
+      entityType: 'project',
+      entityId: id,
+      action: 'parse_contract',
+      details: {
+        fileName: file.name,
+        fileSize: file.size,
+        fileUrl,
+        requirementsExtracted: extraction.requirements.length,
+        clausesExtracted: extraction.extracted_clauses.length,
+        confidenceScore: extraction.confidence_score,
+        contractType: extraction.contract_type,
+        extractionModel: extraction.extractionModel,
+        autoApply,
+        success: extraction.success,
+        error: extraction.error
+      },
+    })
 
     // If extraction failed, return error
     if (!extraction.success) {
@@ -172,52 +172,49 @@ export async function POST(
     }
 
     // If autoApply is true and we have requirements, save them to the project
+    let savedRequirements: any[] = []
     if (autoApply && extraction.requirements.length > 0) {
-      // Delete existing requirements
-      db.prepare('DELETE FROM insurance_requirements WHERE project_id = ?').run(params.id)
+      // Build requirements array for bulk replace
+      const validRequirements = extraction.requirements
+        .filter((req: any) => VALID_COVERAGE_TYPES.includes(req.coverage_type))
+        .map((req: any) => ({
+          coverageType: req.coverage_type as CoverageType,
+          minimumLimit: req.minimum_limit || undefined,
+          limitType: 'per_occurrence',
+          maximumExcess: req.maximum_excess || undefined,
+          principalIndemnityRequired: Boolean(req.principal_indemnity_required),
+          crossLiabilityRequired: Boolean(req.cross_liability_required),
+          waiverOfSubrogationRequired: false,
+          otherRequirements: req.notes || undefined,
+        }))
 
-      // Insert new requirements
-      for (const req of extraction.requirements) {
-        // Validate coverage type
-        if (!VALID_COVERAGE_TYPES.includes(req.coverage_type)) {
-          continue
-        }
+      if (validRequirements.length > 0) {
+        await convex.mutation(api.insuranceRequirements.bulkReplace, {
+          projectId: id as Id<"projects">,
+          requirements: validRequirements,
+        })
 
-        const requirementId = uuidv4()
-        db.prepare(`
-          INSERT INTO insurance_requirements (
-            id, project_id, coverage_type, minimum_limit, limit_type,
-            maximum_excess, principal_indemnity_required, cross_liability_required, other_requirements
-          )
-          VALUES (?, ?, ?, ?, 'per_occurrence', ?, ?, ?, ?)
-        `).run(
-          requirementId,
-          params.id,
-          req.coverage_type,
-          req.minimum_limit,
-          req.maximum_excess,
-          req.principal_indemnity_required ? 1 : 0,
-          req.cross_liability_required ? 1 : 0,
-          req.notes
-        )
+        // Log the auto-apply action
+        await convex.mutation(api.auditLogs.create, {
+          companyId: user.companyId,
+          userId: user._id,
+          entityType: 'project',
+          entityId: id,
+          action: 'auto_apply_requirements',
+          details: {
+            requirementsApplied: validRequirements.length,
+            source: 'gemini_contract_parsing',
+            contractType: extraction.contract_type,
+            confidence: extraction.confidence_score
+          },
+        })
+
+        // Get saved requirements
+        savedRequirements = await convex.query(api.insuranceRequirements.getByProject, {
+          projectId: id as Id<"projects">,
+        })
       }
-
-      // Log the auto-apply action
-      db.prepare(`
-        INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-        VALUES (?, ?, ?, 'project', ?, 'auto_apply_requirements', ?)
-      `).run(uuidv4(), user.company_id, user.id, params.id, JSON.stringify({
-        requirementsApplied: extraction.requirements.length,
-        source: 'gemini_contract_parsing',
-        contractType: extraction.contract_type,
-        confidence: extraction.confidence_score
-      }))
     }
-
-    // Get updated requirements if auto-applied
-    const savedRequirements = autoApply
-      ? db.prepare('SELECT * FROM insurance_requirements WHERE project_id = ?').all(params.id)
-      : []
 
     return NextResponse.json({
       success: true,

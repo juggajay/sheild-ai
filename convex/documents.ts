@@ -250,3 +250,171 @@ export const getFileUrl = query({
     return await ctx.storage.getUrl(args.storageId)
   },
 })
+
+// List documents by company with filtering and details
+export const listByCompany = query({
+  args: {
+    companyId: v.id("companies"),
+    projectId: v.optional(v.id("projects")),
+    subcontractorId: v.optional(v.id("subcontractors")),
+  },
+  handler: async (ctx, args) => {
+    // Get all projects for this company
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    const projectIds = new Set(projects.map((p) => p._id))
+
+    // Get documents filtered appropriately
+    let documents
+
+    if (args.projectId) {
+      // Filter by specific project
+      if (!projectIds.has(args.projectId)) {
+        return { documents: [], total: 0 }
+      }
+
+      if (args.subcontractorId) {
+        documents = await ctx.db
+          .query("cocDocuments")
+          .withIndex("by_subcontractor_project", (q) =>
+            q.eq("subcontractorId", args.subcontractorId!).eq("projectId", args.projectId!)
+          )
+          .order("desc")
+          .collect()
+      } else {
+        documents = await ctx.db
+          .query("cocDocuments")
+          .withIndex("by_project", (q) => q.eq("projectId", args.projectId!))
+          .order("desc")
+          .collect()
+      }
+    } else if (args.subcontractorId) {
+      // Filter by subcontractor across all company projects
+      const allSubDocs = await ctx.db
+        .query("cocDocuments")
+        .withIndex("by_subcontractor", (q) => q.eq("subcontractorId", args.subcontractorId!))
+        .order("desc")
+        .collect()
+
+      documents = allSubDocs.filter((d) => projectIds.has(d.projectId))
+    } else {
+      // Get all documents for company's projects
+      const allDocs = []
+      for (const projectId of Array.from(projectIds)) {
+        const projectDocs = await ctx.db
+          .query("cocDocuments")
+          .withIndex("by_project", (q) => q.eq("projectId", projectId))
+          .collect()
+        allDocs.push(...projectDocs)
+      }
+      // Sort by creation time descending
+      allDocs.sort((a: any, b: any) => (b._creationTime || 0) - (a._creationTime || 0))
+      documents = allDocs
+    }
+
+    // Enrich with subcontractor, project, and verification data
+    const results = await Promise.all(
+      (documents || []).map(async (doc) => {
+        const [subcontractor, project, verification] = await Promise.all([
+          ctx.db.get(doc.subcontractorId),
+          ctx.db.get(doc.projectId),
+          ctx.db
+            .query("verifications")
+            .withIndex("by_document", (q) => q.eq("cocDocumentId", doc._id))
+            .first(),
+        ])
+
+        return {
+          ...doc,
+          subcontractor_name: subcontractor?.name,
+          subcontractor_abn: subcontractor?.abn,
+          project_name: project?.name,
+          verification_status: verification?.status,
+          confidence_score: verification?.confidenceScore,
+        }
+      })
+    )
+
+    return {
+      documents: results,
+      total: results.length,
+    }
+  },
+})
+
+// Get document by ID with full details for company validation
+export const getByIdForCompany = query({
+  args: {
+    id: v.id("cocDocuments"),
+    companyId: v.id("companies"),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.id)
+    if (!doc) return null
+
+    // Verify project belongs to company
+    const project = await ctx.db.get(doc.projectId)
+    if (!project || project.companyId !== args.companyId) return null
+
+    const [subcontractor, verification] = await Promise.all([
+      ctx.db.get(doc.subcontractorId),
+      ctx.db
+        .query("verifications")
+        .withIndex("by_document", (q) => q.eq("cocDocumentId", args.id))
+        .first(),
+    ])
+
+    return {
+      ...doc,
+      company_id: project.companyId,
+      subcontractor_name: subcontractor?.name,
+      subcontractor_abn: subcontractor?.abn,
+      project_name: project?.name,
+      project_manager_id: project?.projectManagerId,
+      verification_id: verification?._id,
+      verification_status: verification?.status,
+      confidence_score: verification?.confidenceScore,
+      extracted_data: verification?.extractedData,
+      checks: verification?.checks,
+      deficiencies: verification?.deficiencies,
+      verified_by_user_id: verification?.verifiedByUserId,
+      verified_at: verification?.verifiedAt,
+    }
+  },
+})
+
+// Validate document access for download
+export const validateDocumentAccess = query({
+  args: {
+    documentId: v.id("cocDocuments"),
+    userId: v.id("users"),
+    userRole: v.string(),
+    userCompanyId: v.id("companies"),
+  },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db.get(args.documentId)
+    if (!doc) return { canAccess: false, document: null }
+
+    // Get project to verify company
+    const project = await ctx.db.get(doc.projectId)
+    if (!project || project.companyId !== args.userCompanyId) {
+      return { canAccess: false, document: null }
+    }
+
+    // For project_manager role, check if they manage this project
+    if (args.userRole === "project_manager" && project.projectManagerId !== args.userId) {
+      return { canAccess: false, document: null }
+    }
+
+    return {
+      canAccess: true,
+      document: {
+        ...doc,
+        project_manager_id: project.projectManagerId,
+      },
+    }
+  },
+})

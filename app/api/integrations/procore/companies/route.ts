@@ -1,24 +1,16 @@
 import { NextResponse } from 'next/server'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import { getDb } from '@/lib/db'
 import {
   getProcoreConfig,
   isProcoreDevMode,
   MOCK_PROCORE_COMPANIES,
 } from '@/lib/procore'
 
-interface OAuthConnection {
-  id: string
-  company_id: string
-  provider: string
-  access_token: string
-  refresh_token: string | null
-  token_expires_at: string | null
-  procore_company_id: number | null
-  procore_company_name: string | null
-  pending_company_selection: number
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface ProcoreCompanyResponse {
   id: number
@@ -52,13 +44,11 @@ export async function GET() {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
-    const db = getDb()
-
     // Get existing Procore connection
-    const connection = db.prepare(`
-      SELECT * FROM oauth_connections
-      WHERE company_id = ? AND provider = 'procore'
-    `).get(user.company_id) as OAuthConnection | undefined
+    const connection = await convex.query(api.integrations.getConnection, {
+      companyId: user.company_id as Id<"companies">,
+      provider: 'procore',
+    })
 
     if (!connection) {
       return NextResponse.json({
@@ -83,7 +73,7 @@ export async function GET() {
       // Fetch companies from Procore API
       const response = await fetch(`${config.apiBaseUrl}/rest/v1.0/companies`, {
         headers: {
-          Authorization: `Bearer ${connection.access_token}`,
+          Authorization: `Bearer ${connection.accessToken}`,
         },
       })
 
@@ -103,8 +93,8 @@ export async function GET() {
 
     return NextResponse.json({
       companies: activeCompanies,
-      selectedCompanyId: connection.procore_company_id,
-      pendingSelection: connection.pending_company_selection === 1,
+      selectedCompanyId: connection.procoreCompanyId,
+      pendingSelection: connection.pendingCompanySelection === true,
     })
   } catch (error) {
     console.error('Procore companies error:', error)

@@ -188,7 +188,7 @@ export const update = mutation({
   },
 })
 
-// Update compliance status
+// Update compliance status by ID
 export const updateStatus = mutation({
   args: {
     id: v.id("projectSubcontractors"),
@@ -199,6 +199,34 @@ export const updateStatus = mutation({
       status: args.status,
       updatedAt: Date.now(),
     })
+  },
+})
+
+// Update compliance status by project and subcontractor
+export const updateStatusByProjectAndSubcontractor = mutation({
+  args: {
+    projectId: v.id("projects"),
+    subcontractorId: v.id("subcontractors"),
+    status: complianceStatus,
+  },
+  handler: async (ctx, args) => {
+    const link = await ctx.db
+      .query("projectSubcontractors")
+      .withIndex("by_project_subcontractor", (q) =>
+        q.eq("projectId", args.projectId).eq("subcontractorId", args.subcontractorId)
+      )
+      .first()
+
+    if (!link) {
+      throw new Error("Project-subcontractor link not found")
+    }
+
+    await ctx.db.patch(link._id, {
+      status: args.status,
+      updatedAt: Date.now(),
+    })
+
+    return link._id
   },
 })
 
@@ -299,5 +327,148 @@ export const getCompanyComplianceStats = query({
         ? Math.round(((totalCompliant + totalException) / total) * 100)
         : 0,
     }
+  },
+})
+
+// Get project subcontractors with full details (for project subcontractors list)
+export const getByProjectWithDetails = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    const links = await ctx.db
+      .query("projectSubcontractors")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .collect()
+
+    // Get subcontractor details for each link
+    const results = await Promise.all(
+      links.map(async (link) => {
+        const subcontractor = await ctx.db.get(link.subcontractorId)
+        if (!subcontractor) return null
+
+        return {
+          project_subcontractor_id: link._id,
+          status: link.status,
+          on_site_date: link.onSiteDate,
+          assigned_at: link._creationTime,
+          // Subcontractor details
+          id: subcontractor._id,
+          name: subcontractor.name,
+          abn: subcontractor.abn,
+          acn: subcontractor.acn,
+          tradingName: subcontractor.tradingName,
+          address: subcontractor.address,
+          trade: subcontractor.trade,
+          contactName: subcontractor.contactName,
+          contactEmail: subcontractor.contactEmail,
+          contactPhone: subcontractor.contactPhone,
+          brokerName: subcontractor.brokerName,
+          brokerEmail: subcontractor.brokerEmail,
+          brokerPhone: subcontractor.brokerPhone,
+          workersCompState: subcontractor.workersCompState,
+          portalAccess: subcontractor.portalAccess,
+        }
+      })
+    )
+
+    // Filter out nulls and sort by name
+    const filteredResults = results.filter((r) => r !== null)
+    filteredResults.sort((a, b) => a!.name.localeCompare(b!.name))
+
+    return {
+      subcontractors: filteredResults,
+      total: filteredResults.length,
+    }
+  },
+})
+
+// Validate subcontractor belongs to company
+export const validateSubcontractor = query({
+  args: {
+    subcontractorId: v.id("subcontractors"),
+    companyId: v.id("companies"),
+  },
+  handler: async (ctx, args) => {
+    const subcontractor = await ctx.db.get(args.subcontractorId)
+    if (!subcontractor) return { valid: false, subcontractor: null }
+    if (subcontractor.companyId !== args.companyId) return { valid: false, subcontractor: null }
+    return { valid: true, subcontractor }
+  },
+})
+
+// Get project-subcontractor link with project details for access control
+export const getByIdWithProject = query({
+  args: { id: v.id("projectSubcontractors") },
+  handler: async (ctx, args) => {
+    const ps = await ctx.db.get(args.id)
+    if (!ps) return null
+
+    const project = await ctx.db.get(ps.projectId)
+    if (!project) return null
+
+    return {
+      ...ps,
+      companyId: project.companyId,
+      projectManagerId: project.projectManagerId,
+      projectName: project.name,
+    }
+  },
+})
+
+// List all project-subcontractors for a company with role filtering
+export const listByCompanyWithRoleFilter = query({
+  args: {
+    companyId: v.id("companies"),
+    userId: v.optional(v.id("users")),
+    filterByProjectManagerOnly: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    // Get all projects for this company
+    let projects = await ctx.db
+      .query("projects")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    // If filtering by project manager only, filter projects
+    if (args.filterByProjectManagerOnly && args.userId) {
+      projects = projects.filter((p) => p.projectManagerId === args.userId)
+    }
+
+    const projectMap = new Map(projects.map((p) => [p._id, p]))
+
+    // Get all project-subcontractors for these projects
+    const results = []
+    for (const project of projects) {
+      const links = await ctx.db
+        .query("projectSubcontractors")
+        .withIndex("by_project", (q) => q.eq("projectId", project._id))
+        .collect()
+
+      for (const link of links) {
+        const subcontractor = await ctx.db.get(link.subcontractorId)
+        if (!subcontractor) continue
+
+        results.push({
+          id: link._id,
+          project_id: link.projectId,
+          subcontractor_id: link.subcontractorId,
+          status: link.status,
+          on_site_date: link.onSiteDate
+            ? new Date(link.onSiteDate).toISOString()
+            : null,
+          project_name: project.name,
+          subcontractor_name: subcontractor.name,
+          subcontractor_abn: subcontractor.abn,
+        })
+      }
+    }
+
+    // Sort by project name, then subcontractor name
+    results.sort((a, b) => {
+      const projectCompare = a.project_name.localeCompare(b.project_name)
+      if (projectCompare !== 0) return projectCompare
+      return a.subcontractor_name.localeCompare(b.subcontractor_name)
+    })
+
+    return results
   },
 })

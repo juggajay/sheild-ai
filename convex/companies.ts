@@ -188,10 +188,161 @@ export const updateSubscription = mutation({
     id: v.id("companies"),
     subscriptionTier: v.string(),
     subscriptionStatus: v.string(),
+    trialEndsAt: v.optional(v.number()),
+    stripeCustomerId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    subscriptionPeriodEnd: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const company = await ctx.db.get(args.id)
+    if (!company) throw new Error("Company not found")
+
+    // Merge with existing settings to store Stripe-specific data
+    const settings = {
+      ...(company.settings || {}),
+      trialEndsAt: args.trialEndsAt || (company.settings as Record<string, unknown>)?.trialEndsAt,
+      stripeCustomerId: args.stripeCustomerId || (company.settings as Record<string, unknown>)?.stripeCustomerId,
+      stripeSubscriptionId: args.stripeSubscriptionId || (company.settings as Record<string, unknown>)?.stripeSubscriptionId,
+      subscriptionPeriodEnd: args.subscriptionPeriodEnd || (company.settings as Record<string, unknown>)?.subscriptionPeriodEnd,
+    }
+
+    await ctx.db.patch(args.id, {
+      subscriptionTier: args.subscriptionTier,
+      subscriptionStatus: args.subscriptionStatus,
+      settings,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+// Get subscription details with vendor count
+export const getSubscriptionDetails = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    const company = await ctx.db.get(args.companyId)
+    if (!company) return null
+
+    // Get vendor count
+    const subcontractors = await ctx.db
+      .query("subcontractors")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    const vendorCount = subcontractors.length
+
+    // Get billing events from audit logs
+    const billingEvents = await ctx.db
+      .query("auditLogs")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .order("desc")
+      .take(100)
+
+    const billingAuditLogs = billingEvents
+      .filter((log) => log.entityType === "subscription" || log.entityType === "billing")
+      .slice(0, 10)
+
+    const settings = company.settings as Record<string, unknown> || {}
+
+    return {
+      company: {
+        ...company,
+        stripe_customer_id: settings.stripeCustomerId,
+        stripe_subscription_id: settings.stripeSubscriptionId,
+        subscription_period_end: settings.subscriptionPeriodEnd,
+        trial_ends_at: settings.trialEndsAt,
+      },
+      vendorCount,
+      billingEvents: billingAuditLogs.map((event) => ({
+        id: event._id,
+        event_type: event.action,
+        details: JSON.stringify(event.details || {}),
+        created_at: new Date(event._creationTime).toISOString(),
+      })),
+    }
+  },
+})
+
+// Update Stripe customer ID
+export const updateStripeCustomerId = mutation({
+  args: {
+    id: v.id("companies"),
+    stripeCustomerId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const company = await ctx.db.get(args.id)
+    if (!company) throw new Error("Company not found")
+
+    const settings = {
+      ...(company.settings || {}),
+      stripeCustomerId: args.stripeCustomerId,
+    }
+
+    await ctx.db.patch(args.id, {
+      settings,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+// Find company by Stripe customer ID
+export const getByStripeCustomerId = query({
+  args: { stripeCustomerId: v.string() },
+  handler: async (ctx, args) => {
+    // Since stripeCustomerId is stored in settings, we need to scan
+    const companies = await ctx.db.query("companies").collect()
+
+    for (const company of companies) {
+      const settings = company.settings as Record<string, unknown> || {}
+      if (settings.stripeCustomerId === args.stripeCustomerId) {
+        return company
+      }
+    }
+
+    return null
+  },
+})
+
+// Update subscription from Stripe webhook
+export const updateSubscriptionFromWebhook = mutation({
+  args: {
+    id: v.id("companies"),
+    subscriptionTier: v.optional(v.string()),
+    subscriptionStatus: v.string(),
+    stripeSubscriptionId: v.optional(v.string()),
+    subscriptionPeriodEnd: v.optional(v.number()),
+    trialEndsAt: v.optional(v.number()),
+    clearSubscription: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const company = await ctx.db.get(args.id)
+    if (!company) throw new Error("Company not found")
+
+    const currentSettings = company.settings as Record<string, unknown> || {}
+
+    const newSettings = {
+      ...currentSettings,
+      stripeSubscriptionId: args.clearSubscription ? undefined : (args.stripeSubscriptionId || currentSettings.stripeSubscriptionId),
+      subscriptionPeriodEnd: args.clearSubscription ? undefined : (args.subscriptionPeriodEnd || currentSettings.subscriptionPeriodEnd),
+      trialEndsAt: args.trialEndsAt || currentSettings.trialEndsAt,
+    }
+
+    await ctx.db.patch(args.id, {
+      subscriptionTier: args.subscriptionTier || company.subscriptionTier,
+      subscriptionStatus: args.subscriptionStatus,
+      settings: newSettings,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+// Update subscription status only (for past_due, active transitions)
+export const updateSubscriptionStatus = mutation({
+  args: {
+    id: v.id("companies"),
+    subscriptionStatus: v.string(),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.id, {
-      subscriptionTier: args.subscriptionTier,
       subscriptionStatus: args.subscriptionStatus,
       updatedAt: Date.now(),
     })

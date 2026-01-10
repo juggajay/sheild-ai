@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import { sendFollowUpEmail, isEmailConfigured } from '@/lib/resend'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // POST /api/communications/resend - Resend a follow-up communication for a failed verification
 export async function POST(request: NextRequest) {
@@ -18,6 +21,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { verificationId, subcontractorId, projectId } = body
 
@@ -25,37 +32,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'verificationId, subcontractorId, and projectId are required' }, { status: 400 })
     }
 
-    const db = getDb()
-
     // Verify project belongs to user's company
-    const project = db.prepare(`
-      SELECT id, name FROM projects WHERE id = ? AND company_id = ?
-    `).get(projectId, user.company_id) as { id: string; name: string } | undefined
+    const project = await convex.query(api.projects.getByIdForCompany, {
+      id: projectId as Id<"projects">,
+      companyId: user.company_id as Id<"companies">,
+    })
 
     if (!project) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 })
     }
 
-    // Get verification and subcontractor info
-    const verification = db.prepare(`
-      SELECT v.*, d.file_name
-      FROM verifications v
-      JOIN coc_documents d ON v.coc_document_id = d.id
-      WHERE v.id = ?
-    `).get(verificationId) as {
-      id: string
-      status: string
-      deficiencies: string
-      file_name: string
-    } | undefined
+    // Get verification info
+    const verification = await convex.query(api.verifications.getById, {
+      id: verificationId as Id<"verifications">,
+    })
 
     if (!verification) {
       return NextResponse.json({ error: 'Verification not found' }, { status: 404 })
     }
 
-    const subcontractor = db.prepare(`
-      SELECT id, name, contact_email FROM subcontractors WHERE id = ?
-    `).get(subcontractorId) as { id: string; name: string; contact_email: string | null } | undefined
+    // Get subcontractor info
+    const subcontractor = await convex.query(api.subcontractors.getById, {
+      id: subcontractorId as Id<"subcontractors">,
+    })
 
     if (!subcontractor) {
       return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
@@ -64,7 +63,11 @@ export async function POST(request: NextRequest) {
     // Parse deficiencies for the email
     let rawDeficiencies: Array<{ check_name?: string; message?: string; type?: string; description?: string }> = []
     try {
-      rawDeficiencies = JSON.parse(verification.deficiencies || '[]')
+      if (Array.isArray(verification.deficiencies)) {
+        rawDeficiencies = verification.deficiencies as typeof rawDeficiencies
+      } else if (typeof verification.deficiencies === 'string') {
+        rawDeficiencies = JSON.parse(verification.deficiencies || '[]')
+      }
     } catch {
       rawDeficiencies = []
     }
@@ -79,10 +82,7 @@ export async function POST(request: NextRequest) {
 
     const deficiencyList = rawDeficiencies.map(d => `- ${d.check_name || d.type || 'Issue'}: ${d.message || d.description || 'See details'}`).join('\n')
 
-    // Create a follow-up communication record
-    const communicationId = uuidv4()
-    const now = new Date().toISOString()
-
+    const now = Date.now()
     const emailSubject = `Follow-up: Insurance Certificate Required - ${project.name}`
     const emailBody = `Dear ${subcontractor.name},
 
@@ -102,13 +102,13 @@ Thank you for your prompt attention to this matter.
 Best regards,
 The Compliance Team`
 
-    // Actually send the email via SendGrid
-    let emailStatus = 'sent'
+    // Actually send the email via Resend
+    let emailStatus: 'sent' | 'pending' | 'failed' = 'sent'
     let emailError: string | undefined
 
-    if (isEmailConfigured() && subcontractor.contact_email) {
+    if (isEmailConfigured() && subcontractor.contactEmail) {
       const emailResult = await sendFollowUpEmail({
-        recipientEmail: subcontractor.contact_email,
+        recipientEmail: subcontractor.contactEmail,
         subcontractorName: subcontractor.name,
         projectName: project.name,
         deficiencies,
@@ -121,54 +121,41 @@ The Compliance Team`
         emailError = emailResult.error
         console.error('[Resend] Failed to send email:', emailResult.error)
       }
-    } else if (!subcontractor.contact_email) {
+    } else if (!subcontractor.contactEmail) {
       emailStatus = 'failed'
       emailError = 'No contact email available'
     } else {
-      console.log('[Resend] SendGrid not configured, recording communication without sending')
+      console.log('[Resend] Email not configured, recording communication without sending')
     }
 
-    db.prepare(`
-      INSERT INTO communications (
-        id, subcontractor_id, project_id, verification_id,
-        type, channel, recipient_email, subject, body,
-        status, sent_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      communicationId,
-      subcontractorId,
-      projectId,
-      verificationId,
-      'follow_up',
-      'email',
-      subcontractor.contact_email,
-      emailSubject,
-      emailBody,
-      emailStatus,
-      emailStatus === 'sent' ? now : null,
-      now,
-      now
-    )
+    // Create communication record in Convex
+    const communicationId = await convex.mutation(api.communications.create, {
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+      projectId: projectId as Id<"projects">,
+      verificationId: verificationId as Id<"verifications">,
+      type: 'follow_up',
+      channel: 'email',
+      recipientEmail: subcontractor.contactEmail || undefined,
+      subject: emailSubject,
+      body: emailBody,
+      status: emailStatus,
+      sentAt: emailStatus === 'sent' ? now : undefined,
+    })
 
     // Log the audit entry
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      uuidv4(),
-      user.company_id,
-      user.id,
-      'communication',
-      communicationId,
-      'resend',
-      JSON.stringify({
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'communication',
+      entityId: communicationId,
+      action: 'resend',
+      details: {
         verification_id: verificationId,
         subcontractor_name: subcontractor.name,
         project_name: project.name,
         type: 'follow_up'
-      }),
-      now
-    )
+      }
+    })
 
     return NextResponse.json({
       success: emailStatus === 'sent',
@@ -177,8 +164,8 @@ The Compliance Team`
         id: communicationId,
         type: 'follow_up',
         status: emailStatus,
-        recipient: subcontractor.contact_email,
-        sent_at: emailStatus === 'sent' ? now : null
+        recipient: subcontractor.contactEmail,
+        sent_at: emailStatus === 'sent' ? new Date(now).toISOString() : null
       }
     })
 

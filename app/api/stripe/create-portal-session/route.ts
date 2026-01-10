@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, type Company } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
-import { v4 as uuidv4 } from 'uuid'
 import { createPortalSession, isStripeConfigured } from '@/lib/stripe'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 /**
  * POST /api/stripe/create-portal-session
@@ -42,10 +45,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const db = getDb()
-    const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(user.company_id) as Company & {
-      stripe_customer_id?: string
-    } | undefined
+    // Get company from Convex
+    const company = await convex.query(api.companies.getById, {
+      id: user.company_id as Id<"companies">,
+    })
 
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
@@ -68,7 +71,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Production mode - create actual portal session
-    if (!company.stripe_customer_id) {
+    const settings = company.settings as Record<string, unknown> || {}
+    const stripeCustomerId = settings.stripeCustomerId as string | undefined
+
+    if (!stripeCustomerId) {
       return NextResponse.json(
         { error: 'No billing account found. Please subscribe to a plan first.' },
         { status: 400 }
@@ -76,17 +82,21 @@ export async function POST(request: NextRequest) {
     }
 
     const session = await createPortalSession({
-      customerId: company.stripe_customer_id,
+      customerId: stripeCustomerId,
       returnUrl,
     })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'subscription', ?, 'access_portal', ?)
-    `).run(uuidv4(), user.company_id, user.id, user.company_id, JSON.stringify({
-      stripe_customer_id: company.stripe_customer_id,
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'subscription',
+      entityId: user.company_id,
+      action: 'access_portal',
+      details: {
+        stripe_customer_id: stripeCustomerId,
+      },
+    })
 
     const portalUrl = 'url' in session ? session.url : null
 

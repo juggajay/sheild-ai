@@ -82,6 +82,7 @@ export const create = mutation({
     subject: v.optional(v.string()),
     body: v.optional(v.string()),
     status: communicationStatus,
+    sentAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const communicationId = await ctx.db.insert("communications", {
@@ -95,7 +96,7 @@ export const create = mutation({
       subject: args.subject,
       body: args.body,
       status: args.status,
-      sentAt: undefined,
+      sentAt: args.sentAt,
       deliveredAt: undefined,
       openedAt: undefined,
       updatedAt: Date.now(),
@@ -158,5 +159,121 @@ export const getBySubcontractorWithDetails = query({
     )
 
     return results
+  },
+})
+
+// List communications by company with subcontractor and project details
+export const listByCompany = query({
+  args: {
+    companyId: v.id("companies"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    // Get all projects for this company
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    const projectIds = new Set(projects.map((p) => p._id))
+    const projectMap = new Map(projects.map((p) => [p._id, p.name]))
+
+    // Get communications for these projects
+    const allComms = []
+    for (const projectId of Array.from(projectIds)) {
+      const comms = await ctx.db
+        .query("communications")
+        .withIndex("by_project", (q) => q.eq("projectId", projectId))
+        .order("desc")
+        .collect()
+      allComms.push(...comms)
+    }
+
+    // Sort by creation time descending and limit
+    allComms.sort((a: any, b: any) => (b._creationTime || 0) - (a._creationTime || 0))
+    const limited = args.limit ? allComms.slice(0, args.limit) : allComms.slice(0, 100)
+
+    // Enrich with subcontractor and project names
+    const results = await Promise.all(
+      limited.map(async (comm) => {
+        const subcontractor = await ctx.db.get(comm.subcontractorId)
+        return {
+          ...comm,
+          subcontractor_name: subcontractor?.name || null,
+          project_name: projectMap.get(comm.projectId) || null,
+        }
+      })
+    )
+
+    return results
+  },
+})
+
+// Find recent communications by recipient email
+export const getRecentByRecipientEmail = query({
+  args: {
+    recipientEmail: v.string(),
+    statuses: v.array(v.string()),
+    daysBack: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const daysBack = args.daysBack || 7
+    const cutoffTime = Date.now() - daysBack * 24 * 60 * 60 * 1000
+
+    // Query all communications and filter by email and time
+    // Since we don't have an index on recipientEmail, we need to scan
+    const allComms = await ctx.db.query("communications").collect()
+
+    const filtered = allComms.filter((comm) => {
+      if (comm.recipientEmail?.toLowerCase() !== args.recipientEmail.toLowerCase()) return false
+      if (!args.statuses.includes(comm.status)) return false
+      if (!comm.sentAt || comm.sentAt < cutoffTime) return false
+      return true
+    })
+
+    // Sort by sentAt descending
+    filtered.sort((a, b) => (b.sentAt || 0) - (a.sentAt || 0))
+
+    return filtered.slice(0, args.limit || 5)
+  },
+})
+
+// Update communication from webhook event
+export const updateFromWebhook = mutation({
+  args: {
+    id: v.id("communications"),
+    status: communicationStatus,
+    deliveredAt: v.optional(v.number()),
+    openedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const comm = await ctx.db.get(args.id)
+    if (!comm) throw new Error("Communication not found")
+
+    // Status priority - only update if new status is higher or it's a failure
+    const statusPriority: Record<string, number> = {
+      pending: 0,
+      sent: 1,
+      delivered: 2,
+      opened: 3,
+      failed: -1, // Special case
+    }
+
+    const currentPriority = statusPriority[comm.status] ?? 0
+    const newPriority = statusPriority[args.status] ?? 0
+
+    // Only update if new status is higher priority or if it's a failure
+    if (args.status === "failed" || newPriority > currentPriority) {
+      await ctx.db.patch(args.id, {
+        status: args.status,
+        deliveredAt: args.deliveredAt || comm.deliveredAt,
+        openedAt: args.openedAt || comm.openedAt,
+        updatedAt: Date.now(),
+      })
+      return { updated: true, previousStatus: comm.status, newStatus: args.status }
+    }
+
+    return { updated: false, previousStatus: comm.status, newStatus: args.status }
   },
 })

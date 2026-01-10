@@ -1,26 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
-import { getUserByToken } from '@/lib/auth'
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 import { downloadFile } from '@/lib/storage'
 import path from 'path'
-
-interface COCDocument {
-  id: string
-  file_url: string
-  file_name: string
-  project_id: string
-}
-
-interface Project {
-  id: string
-  company_id: string
-  project_manager_id: string | null
-}
 
 // GET /api/documents/[id]/download - Download a document file
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -29,48 +16,48 @@ export async function GET(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
-
-    // Get document
-    const document = db.prepare(`
-      SELECT d.*, p.company_id, p.project_manager_id
-      FROM coc_documents d
-      JOIN projects p ON d.project_id = p.id
-      WHERE d.id = ?
-    `).get(params.id) as (COCDocument & { company_id: string; project_manager_id: string | null }) | undefined
-
-    if (!document) {
-      return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
-    // Check access - must be same company
-    if (document.company_id !== user.company_id) {
+    const { id } = await params
+
+    // Validate document access
+    const accessResult = await convex.query(api.documents.validateDocumentAccess, {
+      documentId: id as Id<"cocDocuments">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
+
+    if (!accessResult.canAccess || !accessResult.document) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
-    // For project_manager role, check if they manage this project
-    if (user.role === 'project_manager' && document.project_manager_id !== user.id) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 })
-    }
+    const document = accessResult.document
 
     // Determine the storage path from the file URL
     let storagePath: string
 
-    if (document.file_url.startsWith('/uploads/')) {
+    if (document.fileUrl.startsWith('/uploads/')) {
       // Local file URL - extract the path after /uploads/
-      storagePath = document.file_url.replace('/uploads/', '')
-    } else if (document.file_url.startsWith('http')) {
+      storagePath = document.fileUrl.replace('/uploads/', '')
+    } else if (document.fileUrl.startsWith('http')) {
       // Supabase URL - extract the storage path
       // Format: https://xxx.supabase.co/storage/v1/object/public/coc-documents/documents/uuid.pdf
-      const urlParts = document.file_url.split('/coc-documents/')
-      storagePath = urlParts[1] || document.file_url
+      const urlParts = document.fileUrl.split('/coc-documents/')
+      storagePath = urlParts[1] || document.fileUrl
     } else {
-      storagePath = document.file_url
+      storagePath = document.fileUrl
     }
 
     // Download the file
@@ -81,7 +68,8 @@ export async function GET(
     }
 
     // Determine content type from filename
-    const ext = path.extname(document.file_name).toLowerCase()
+    const fileName = document.fileName || 'document'
+    const ext = path.extname(fileName).toLowerCase()
     const contentTypes: Record<string, string> = {
       '.pdf': 'application/pdf',
       '.jpg': 'image/jpeg',
@@ -95,7 +83,7 @@ export async function GET(
     return new NextResponse(new Uint8Array(result.buffer), {
       headers: {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="${(document.file_name || 'document').replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
+        'Content-Disposition': `attachment; filename="${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
         'Content-Length': result.buffer.length.toString()
       }
     })

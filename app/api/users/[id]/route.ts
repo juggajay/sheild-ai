@@ -1,27 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 
-interface DbUser {
-  id: string
-  email: string
-  name: string
-  role: string
-  phone: string | null
-  avatar_url: string | null
-  company_id: string
-  last_login_at: string | null
-  created_at: string
-  invitation_status: string | null
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // GET /api/users/[id] - Get user details
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const token = request.cookies.get('auth_token')?.value
 
     if (!token) {
@@ -38,12 +29,14 @@ export async function GET(
       return NextResponse.json({ error: 'Only admins can view user details' }, { status: 403 })
     }
 
-    const db = getDb()
-    const user = db.prepare(`
-      SELECT id, email, name, role, phone, avatar_url, company_id, last_login_at, created_at, invitation_status
-      FROM users
-      WHERE id = ? AND company_id = ?
-    `).get(params.id, currentUser.company_id) as DbUser | undefined
+    if (!currentUser.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
+
+    const user = await convex.query(api.users.getByIdForCompany, {
+      id: id as Id<"users">,
+      companyId: currentUser.company_id as Id<"companies">,
+    })
 
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
@@ -59,9 +52,10 @@ export async function GET(
 // PUT /api/users/[id] - Update user (admin only)
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const token = request.cookies.get('auth_token')?.value
 
     if (!token) {
@@ -78,14 +72,15 @@ export async function PUT(
       return NextResponse.json({ error: 'Only admins can update users' }, { status: 403 })
     }
 
-    const db = getDb()
+    if (!currentUser.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
     // Check if user exists and belongs to the same company
-    const existingUser = db.prepare(`
-      SELECT id, email, name, role, company_id
-      FROM users
-      WHERE id = ? AND company_id = ?
-    `).get(params.id, currentUser.company_id) as DbUser | undefined
+    const existingUser = await convex.query(api.users.getByIdForCompany, {
+      id: id as Id<"users">,
+      companyId: currentUser.company_id as Id<"companies">,
+    })
 
     if (!existingUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
@@ -105,13 +100,12 @@ export async function PUT(
       }
 
       // Prevent demoting yourself if you're the only admin
-      if (currentUser.id === params.id && role !== 'admin') {
-        const adminCount = db.prepare(`
-          SELECT COUNT(*) as count FROM users
-          WHERE company_id = ? AND role = 'admin'
-        `).get(currentUser.company_id) as { count: number }
+      if (currentUser.id === id && role !== 'admin') {
+        const adminCount = await convex.query(api.users.countAdmins, {
+          companyId: currentUser.company_id as Id<"companies">,
+        })
 
-        if (adminCount.count <= 1) {
+        if (adminCount <= 1) {
           return NextResponse.json(
             { error: 'Cannot demote yourself - you are the only admin' },
             { status: 400 }
@@ -120,36 +114,34 @@ export async function PUT(
       }
     }
 
-    // Build update query dynamically
-    const updates: string[] = []
-    const values: (string | null)[] = []
+    // Build update object
+    const updates: {
+      name?: string
+      role?: "admin" | "risk_manager" | "project_manager" | "project_administrator" | "read_only" | "subcontractor" | "broker"
+      phone?: string
+    } = {}
 
     if (name !== undefined) {
-      updates.push('name = ?')
-      values.push(name.trim())
+      updates.name = name.trim()
     }
 
     if (role !== undefined) {
-      updates.push('role = ?')
-      values.push(role)
+      updates.role = role
     }
 
     if (phone !== undefined) {
-      updates.push('phone = ?')
-      values.push(phone?.trim() || null)
+      updates.phone = phone?.trim() || undefined
     }
 
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     }
 
-    updates.push("updated_at = datetime('now')")
-    values.push(params.id)
-
-    db.prepare(`
-      UPDATE users SET ${updates.join(', ')}
-      WHERE id = ?
-    `).run(...values)
+    // Update the user
+    await convex.mutation(api.users.update, {
+      id: id as Id<"users">,
+      ...updates,
+    })
 
     // Log the action
     const details: Record<string, unknown> = {}
@@ -157,22 +149,25 @@ export async function PUT(
     if (role !== undefined) details.role = role
     if (phone !== undefined) details.phone = phone
 
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'user', ?, 'update', ?)
-    `).run(uuidv4(), currentUser.company_id, currentUser.id, params.id, JSON.stringify(details))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: currentUser.company_id as Id<"companies">,
+      userId: currentUser.id as Id<"users">,
+      entityType: 'user',
+      entityId: id,
+      action: 'update',
+      details,
+    })
 
     // Get updated user
-    const updatedUser = db.prepare(`
-      SELECT id, email, name, role, phone, avatar_url, last_login_at, created_at, invitation_status
-      FROM users
-      WHERE id = ?
-    `).get(params.id) as DbUser
+    const updatedUser = await convex.query(api.users.getByIdForCompany, {
+      id: id as Id<"users">,
+      companyId: currentUser.company_id as Id<"companies">,
+    })
 
     return NextResponse.json({
       success: true,
       message: 'User updated successfully',
-      user: updatedUser
+      user: updatedUser,
     })
   } catch (error) {
     console.error('Update user error:', error)
@@ -183,9 +178,10 @@ export async function PUT(
 // DELETE /api/users/[id] - Deactivate user (admin only)
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
     const token = request.cookies.get('auth_token')?.value
 
     if (!token) {
@@ -203,59 +199,57 @@ export async function DELETE(
     }
 
     // Cannot delete yourself
-    if (currentUser.id === params.id) {
+    if (currentUser.id === id) {
       return NextResponse.json({ error: 'Cannot delete your own account' }, { status: 400 })
     }
 
-    const db = getDb()
+    if (!currentUser.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
     // Check if user exists and belongs to the same company
-    const existingUser = db.prepare(`
-      SELECT id, email, name, company_id
-      FROM users
-      WHERE id = ? AND company_id = ?
-    `).get(params.id, currentUser.company_id) as DbUser | undefined
+    const existingUser = await convex.query(api.users.getByIdForCompany, {
+      id: id as Id<"users">,
+      companyId: currentUser.company_id as Id<"companies">,
+    })
 
     if (!existingUser) {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
     // Check if user has created any exceptions (would block deletion)
-    const exceptionsCreated = db.prepare('SELECT COUNT(*) as count FROM exceptions WHERE created_by_user_id = ?').get(params.id) as { count: number }
-    if (exceptionsCreated.count > 0) {
-      return NextResponse.json({ error: 'Cannot delete user who has created exceptions. Transfer ownership first.' }, { status: 400 })
+    const hasExceptions = await convex.query(api.users.hasCreatedExceptions, {
+      userId: id as Id<"users">,
+    })
+
+    if (hasExceptions) {
+      return NextResponse.json(
+        { error: 'Cannot delete user who has created exceptions. Transfer ownership first.' },
+        { status: 400 }
+      )
     }
 
     // Log the action BEFORE deleting (so we have record)
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'user', ?, 'delete', ?)
-    `).run(uuidv4(), currentUser.company_id, currentUser.id, params.id, JSON.stringify({
-      email: existingUser.email,
-      name: existingUser.name
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: currentUser.company_id as Id<"companies">,
+      userId: currentUser.id as Id<"users">,
+      entityType: 'user',
+      entityId: id,
+      action: 'delete',
+      details: {
+        email: existingUser.email,
+        name: existingUser.name,
+      },
+    })
 
-    // Delete user's sessions first
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(params.id)
-
-    // Set user_id to NULL in audit_logs (preserve audit history)
-    db.prepare('UPDATE audit_logs SET user_id = NULL WHERE user_id = ?').run(params.id)
-
-    // Set verified_by_user_id to NULL in verifications
-    db.prepare('UPDATE verifications SET verified_by_user_id = NULL WHERE verified_by_user_id = ?').run(params.id)
-
-    // Set approved_by_user_id to NULL in exceptions (created_by_user_id is NOT NULL, checked above)
-    db.prepare('UPDATE exceptions SET approved_by_user_id = NULL WHERE approved_by_user_id = ?').run(params.id)
-
-    // Set project_manager_id to NULL in projects
-    db.prepare('UPDATE projects SET project_manager_id = NULL WHERE project_manager_id = ?').run(params.id)
-
-    // Delete the user
-    db.prepare('DELETE FROM users WHERE id = ?').run(params.id)
+    // Delete user with cascade (handles sessions, nullifies references)
+    await convex.mutation(api.users.removeWithCascade, {
+      id: id as Id<"users">,
+    })
 
     return NextResponse.json({
       success: true,
-      message: 'User deleted successfully'
+      message: 'User deleted successfully',
     })
   } catch (error) {
     console.error('Delete user error:', error)

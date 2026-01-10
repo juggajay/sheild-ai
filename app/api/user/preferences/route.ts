@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getDb } from "@/lib/db"
+import { ConvexHttpClient } from "convex/browser"
+import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 import { getUserByToken } from "@/lib/auth"
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // Default notification preferences
 const DEFAULT_PREFERENCES = {
@@ -39,8 +43,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
-    const db = getDb()
-    const dbUser = db.prepare("SELECT notification_preferences FROM users WHERE id = ?").get(user.id) as { notification_preferences: string } | undefined
+    const dbUser = await convex.query(api.users.getById, {
+      id: user.id as Id<"users">,
+    })
 
     if (!dbUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
@@ -48,13 +53,8 @@ export async function GET(request: NextRequest) {
 
     // Parse preferences or use defaults
     let preferences = DEFAULT_PREFERENCES
-    if (dbUser.notification_preferences && dbUser.notification_preferences !== '{}') {
-      try {
-        const stored = JSON.parse(dbUser.notification_preferences)
-        preferences = { ...DEFAULT_PREFERENCES, ...stored }
-      } catch {
-        // Use defaults if parsing fails
-      }
+    if (dbUser.notificationPreferences && typeof dbUser.notificationPreferences === 'object') {
+      preferences = { ...DEFAULT_PREFERENCES, ...dbUser.notificationPreferences as any }
     }
 
     return NextResponse.json({ preferences })
@@ -77,7 +77,6 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
-    const db = getDb()
     const body = await request.json()
 
     // Validate email digest value
@@ -86,8 +85,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Invalid email digest option" }, { status: 400 })
     }
 
-    // Get current preferences
-    const dbUser = db.prepare("SELECT notification_preferences FROM users WHERE id = ?").get(user.id) as { notification_preferences: string } | undefined
+    // Get current user
+    const dbUser = await convex.query(api.users.getById, {
+      id: user.id as Id<"users">,
+    })
 
     if (!dbUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
@@ -95,12 +96,8 @@ export async function PUT(request: NextRequest) {
 
     // Merge with existing preferences
     let currentPreferences = DEFAULT_PREFERENCES
-    if (dbUser.notification_preferences && dbUser.notification_preferences !== '{}') {
-      try {
-        currentPreferences = { ...DEFAULT_PREFERENCES, ...JSON.parse(dbUser.notification_preferences) }
-      } catch {
-        // Use defaults if parsing fails
-      }
+    if (dbUser.notificationPreferences && typeof dbUser.notificationPreferences === 'object') {
+      currentPreferences = { ...DEFAULT_PREFERENCES, ...dbUser.notificationPreferences as any }
     }
 
     const newPreferences = {
@@ -117,8 +114,10 @@ export async function PUT(request: NextRequest) {
     }
 
     // Save preferences
-    db.prepare("UPDATE users SET notification_preferences = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(JSON.stringify(newPreferences), user.id)
+    await convex.mutation(api.users.update, {
+      id: user.id as Id<"users">,
+      notificationPreferences: newPreferences,
+    })
 
     return NextResponse.json({
       success: true,

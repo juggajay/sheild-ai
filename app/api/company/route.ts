@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, type Company } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
-import { v4 as uuidv4 } from 'uuid'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // GET /api/company - Get current user's company profile
 export async function GET(request: NextRequest) {
@@ -21,14 +24,34 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
     }
 
-    const db = getDb()
-    const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(user.company_id) as Company | undefined
+    const company = await convex.query(api.companies.getById, {
+      id: user.company_id as Id<"companies">,
+    })
 
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
 
-    return NextResponse.json({ company })
+    // Convert to legacy format for API compatibility
+    return NextResponse.json({
+      company: {
+        id: company._id,
+        name: company.name,
+        abn: company.abn,
+        acn: company.acn || null,
+        address: company.address || null,
+        logo_url: company.logoUrl || null,
+        primary_contact_name: company.primaryContactName || null,
+        primary_contact_email: company.primaryContactEmail || null,
+        primary_contact_phone: company.primaryContactPhone || null,
+        forwarding_email: company.forwardingEmail || null,
+        settings: company.settings || {},
+        subscription_tier: company.subscriptionTier || 'trial',
+        subscription_status: company.subscriptionStatus || 'active',
+        created_at: new Date(company._creationTime).toISOString(),
+        updated_at: company.updatedAt ? new Date(company.updatedAt).toISOString() : null,
+      }
+    })
   } catch (error) {
     console.error('Get company error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -89,54 +112,60 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid contact email format' }, { status: 400 })
     }
 
-    const db = getDb()
-
     // Check if ABN is already used by another company
-    const existingCompany = db.prepare('SELECT id FROM companies WHERE abn = ? AND id != ?').get(abnDigits, user.company_id) as { id: string } | undefined
-    if (existingCompany) {
+    const existingCompany = await convex.query(api.companies.getByAbn, { abn: abnDigits })
+    if (existingCompany && existingCompany._id !== user.company_id) {
       return NextResponse.json({ error: 'ABN is already registered to another company' }, { status: 400 })
     }
 
     // Update company
-    db.prepare(`
-      UPDATE companies SET
-        name = ?,
-        abn = ?,
-        acn = ?,
-        address = ?,
-        logo_url = ?,
-        primary_contact_name = ?,
-        primary_contact_email = ?,
-        primary_contact_phone = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      name.trim(),
-      abnDigits,
-      acn ? acn.replace(/\s/g, '') : null,
-      address || null,
-      logo_url || null,
-      primary_contact_name || null,
-      primary_contact_email || null,
-      primary_contact_phone || null,
-      user.company_id
-    )
+    await convex.mutation(api.companies.update, {
+      id: user.company_id as Id<"companies">,
+      name: name.trim(),
+      abn: abnDigits,
+      acn: acn ? acn.replace(/\s/g, '') : undefined,
+      address: address || undefined,
+      logoUrl: logo_url || undefined,
+      primaryContactName: primary_contact_name || undefined,
+      primaryContactEmail: primary_contact_email || undefined,
+      primaryContactPhone: primary_contact_phone || undefined,
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'company', ?, 'update', ?)
-    `).run(uuidv4(), user.company_id, user.id, user.company_id, JSON.stringify({
-      fields_updated: Object.keys(body)
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'company',
+      entityId: user.company_id,
+      action: 'update',
+      details: { fields_updated: Object.keys(body) },
+    })
 
     // Get updated company
-    const updatedCompany = db.prepare('SELECT * FROM companies WHERE id = ?').get(user.company_id) as Company
+    const updatedCompany = await convex.query(api.companies.getById, {
+      id: user.company_id as Id<"companies">,
+    })
 
     return NextResponse.json({
       success: true,
       message: 'Company profile updated successfully',
-      company: updatedCompany
+      company: updatedCompany ? {
+        id: updatedCompany._id,
+        name: updatedCompany.name,
+        abn: updatedCompany.abn,
+        acn: updatedCompany.acn || null,
+        address: updatedCompany.address || null,
+        logo_url: updatedCompany.logoUrl || null,
+        primary_contact_name: updatedCompany.primaryContactName || null,
+        primary_contact_email: updatedCompany.primaryContactEmail || null,
+        primary_contact_phone: updatedCompany.primaryContactPhone || null,
+        forwarding_email: updatedCompany.forwardingEmail || null,
+        settings: updatedCompany.settings || {},
+        subscription_tier: updatedCompany.subscriptionTier || 'trial',
+        subscription_status: updatedCompany.subscriptionStatus || 'active',
+        created_at: new Date(updatedCompany._creationTime).toISOString(),
+        updated_at: updatedCompany.updatedAt ? new Date(updatedCompany.updatedAt).toISOString() : null,
+      } : null
     })
   } catch (error) {
     console.error('Update company error:', error)

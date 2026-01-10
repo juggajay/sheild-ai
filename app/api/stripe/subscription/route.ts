@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, type Company } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import {
   PRICING_PLANS,
@@ -9,12 +11,7 @@ import {
   type SubscriptionTier,
 } from '@/lib/stripe'
 
-interface ExtendedCompany extends Company {
-  stripe_subscription_id?: string
-  subscription_period_end?: string
-  trial_ends_at?: string
-  vendor_count?: number
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 /**
  * GET /api/stripe/subscription
@@ -41,36 +38,20 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const db = getDb()
-    const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(user.company_id) as ExtendedCompany | undefined
+    // Get subscription details from Convex
+    const details = await convex.query(api.companies.getSubscriptionDetails, {
+      companyId: user.company_id as Id<"companies">,
+    })
 
-    if (!company) {
+    if (!details) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
 
-    // Get vendor count
-    const vendorCountResult = db.prepare(`
-      SELECT COUNT(DISTINCT id) as count FROM subcontractors WHERE company_id = ?
-    `).get(user.company_id) as { count: number }
-
-    const vendorCount = vendorCountResult?.count || 0
-
-    // Get recent billing events
-    const billingEvents = db.prepare(`
-      SELECT * FROM billing_events
-      WHERE company_id = ?
-      ORDER BY created_at DESC
-      LIMIT 10
-    `).all(user.company_id) as Array<{
-      id: string
-      event_type: string
-      details: string
-      created_at: string
-    }>
+    const { company, vendorCount, billingEvents } = details
 
     // Determine subscription details
-    const tier = (company.subscription_tier || 'trial') as SubscriptionTier
-    const status = company.subscription_status || 'active'
+    const tier = (company.subscriptionTier || 'trial') as SubscriptionTier
+    const status = company.subscriptionStatus || 'active'
 
     // Calculate trial days remaining
     let trialDaysRemaining = 0
@@ -78,7 +59,7 @@ export async function GET(request: NextRequest) {
     if (tier === 'trial' || status === 'trialing') {
       isTrialing = true
       if (company.trial_ends_at) {
-        const trialEnd = new Date(company.trial_ends_at)
+        const trialEnd = new Date(company.trial_ends_at as number)
         const now = new Date()
         trialDaysRemaining = Math.max(0, Math.ceil((trialEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
       } else {
@@ -114,7 +95,7 @@ export async function GET(request: NextRequest) {
     // Calculate period end
     let periodEnd = null
     if (company.subscription_period_end) {
-      periodEnd = new Date(company.subscription_period_end).toISOString()
+      periodEnd = new Date(company.subscription_period_end as number).toISOString()
     }
 
     return NextResponse.json({

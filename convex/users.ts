@@ -226,3 +226,155 @@ export const acceptInvitation = mutation({
     })
   },
 })
+
+// Get user by ID with company verification
+export const getByIdForCompany = query({
+  args: {
+    id: v.id("users"),
+    companyId: v.id("companies"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.id)
+    if (!user || user.companyId !== args.companyId) return null
+
+    return {
+      id: user._id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      phone: user.phone || null,
+      avatar_url: user.avatarUrl || null,
+      company_id: user.companyId,
+      last_login_at: user.lastLoginAt
+        ? new Date(user.lastLoginAt).toISOString()
+        : null,
+      created_at: new Date(user._creationTime).toISOString(),
+      invitation_status: user.invitationStatus || null,
+    }
+  },
+})
+
+// Check if user has created exceptions
+export const hasCreatedExceptions = query({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    // Query exceptions where createdByUserId matches
+    const exceptions = await ctx.db
+      .query("exceptions")
+      .filter((q) => q.eq(q.field("createdByUserId"), args.userId))
+      .take(1)
+
+    return exceptions.length > 0
+  },
+})
+
+// Count admins in company
+export const countAdmins = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    const admins = await ctx.db
+      .query("users")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    return admins.filter((u) => u.role === "admin").length
+  },
+})
+
+// List users by company (excluding portal users) with separate active and pending
+export const listByCompanyFiltered = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    const users = await ctx.db
+      .query("users")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    // Filter out portal users (subcontractor, broker)
+    const filteredUsers = users
+      .filter((u) => !["subcontractor", "broker"].includes(u.role))
+      .map((u) => ({
+        id: u._id,
+        email: u.email,
+        name: u.name,
+        role: u.role,
+        phone: u.phone || null,
+        avatar_url: u.avatarUrl || null,
+        last_login_at: u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : null,
+        created_at: new Date(u._creationTime).toISOString(),
+        invitation_status: u.invitationStatus || null,
+      }))
+
+    // Sort by creation time descending
+    filteredUsers.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+    // Separate active users and pending invitations
+    const activeUsers = filteredUsers.filter((u) => u.invitation_status !== "pending")
+    const pendingInvitations = filteredUsers.filter((u) => u.invitation_status === "pending")
+
+    return {
+      users: activeUsers,
+      pendingInvitations,
+      total: filteredUsers.length,
+    }
+  },
+})
+
+// Remove user with cascade (nullify references, delete sessions)
+export const removeWithCascade = mutation({
+  args: { id: v.id("users") },
+  handler: async (ctx, args) => {
+    // Delete all sessions for this user
+    const sessions = await ctx.db
+      .query("sessions")
+      .withIndex("by_user", (q) => q.eq("userId", args.id))
+      .collect()
+
+    for (const session of sessions) {
+      await ctx.db.delete(session._id)
+    }
+
+    // Nullify user_id in audit_logs (preserve audit history)
+    const auditLogs = await ctx.db
+      .query("auditLogs")
+      .filter((q) => q.eq(q.field("userId"), args.id))
+      .collect()
+
+    for (const log of auditLogs) {
+      await ctx.db.patch(log._id, { userId: undefined })
+    }
+
+    // Nullify verified_by_user_id in verifications
+    const verifications = await ctx.db
+      .query("verifications")
+      .filter((q) => q.eq(q.field("verifiedByUserId"), args.id))
+      .collect()
+
+    for (const verification of verifications) {
+      await ctx.db.patch(verification._id, { verifiedByUserId: undefined })
+    }
+
+    // Nullify approved_by_user_id in exceptions
+    const exceptions = await ctx.db
+      .query("exceptions")
+      .filter((q) => q.eq(q.field("approvedByUserId"), args.id))
+      .collect()
+
+    for (const exception of exceptions) {
+      await ctx.db.patch(exception._id, { approvedByUserId: undefined })
+    }
+
+    // Nullify project_manager_id in projects
+    const projects = await ctx.db
+      .query("projects")
+      .filter((q) => q.eq(q.field("projectManagerId"), args.id))
+      .collect()
+
+    for (const project of projects) {
+      await ctx.db.patch(project._id, { projectManagerId: undefined })
+    }
+
+    // Delete the user
+    await ctx.db.delete(args.id)
+  },
+})

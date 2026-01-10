@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserByToken, getUserByTokenAsync } from '@/lib/auth'
-import { getDb, isProduction, getSupabase } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
+import { getUserByToken } from '@/lib/auth'
 import { v4 as uuidv4 } from 'uuid'
 import {
   getProcoreConfig,
   isProcoreDevMode,
   buildProcoreAuthUrl,
 } from '@/lib/procore'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 /**
  * GET /api/integrations/procore/connect
@@ -22,10 +26,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get user - use async version for production (Supabase), sync for dev (SQLite)
-    const user = isProduction
-      ? await getUserByTokenAsync(token)
-      : getUserByToken(token)
+    const user = getUserByToken(token)
 
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -36,41 +37,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
     }
 
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 400 })
+    }
+
     const config = getProcoreConfig()
     const isDevMode = isProcoreDevMode()
 
     // Generate state token for CSRF protection
     const state = uuidv4()
-    const stateId = uuidv4()
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
 
-    // Store state in database for verification
-    if (isProduction) {
-      const supabase = getSupabase()
-      console.log(`[Procore] Storing OAuth state in Supabase: ${state.substring(0, 8)}...`)
-      const { error: insertError } = await supabase.from('oauth_states').insert({
-        id: stateId,
-        user_id: user.id,
-        company_id: user.company_id,
+    // Store state in Convex for verification
+    console.log(`[Procore] Storing OAuth state in Convex: ${state.substring(0, 8)}...`)
+    try {
+      await convex.mutation(api.integrations.createOAuthState, {
+        userId: user.id as Id<"users">,
+        companyId: user.company_id as Id<"companies">,
         provider: 'procore',
         state,
-        created_at: new Date().toISOString(),
-        expires_at: expiresAt
       })
-      if (insertError) {
-        console.error('[Procore] Failed to store OAuth state:', insertError)
-        return NextResponse.json(
-          { error: 'Failed to initiate OAuth flow', details: insertError.message },
-          { status: 500 }
-        )
-      }
       console.log(`[Procore] OAuth state stored successfully`)
-    } else {
-      const db = getDb()
-      db.prepare(`
-        INSERT INTO oauth_states (id, user_id, company_id, provider, state, created_at, expires_at)
-        VALUES (?, ?, ?, 'procore', ?, datetime('now'), datetime('now', '+10 minutes'))
-      `).run(stateId, user.id, user.company_id, state)
+    } catch (error) {
+      console.error('[Procore] Failed to store OAuth state:', error)
+      return NextResponse.json(
+        { error: 'Failed to initiate OAuth flow' },
+        { status: 500 }
+      )
     }
 
     // Dev mode simulation - redirect directly to callback

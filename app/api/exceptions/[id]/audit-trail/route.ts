@@ -1,25 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getDb } from "@/lib/db"
+import { ConvexHttpClient } from "convex/browser"
+import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 import { getUserByToken } from "@/lib/auth"
 
-interface ExceptionData {
-  id: string
-  issue_summary: string
-  reason: string
-  risk_level: string
-  status: string
-  expiration_type: string
-  expires_at: string | null
-  created_at: string
-  subcontractor_name: string
-  subcontractor_abn: string
-  project_name: string
-  created_by_name: string
-  created_by_email: string
-  approved_by_name: string | null
-  approved_at: string | null
-  company_name: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface AuditLogEntry {
   id: string
@@ -34,9 +19,10 @@ interface AuditLogEntry {
 // GET /api/exceptions/[id]/audit-trail - Generate PDF audit trail for an exception
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id: exceptionId } = await params
     const token = request.cookies.get("auth_token")?.value
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -52,49 +38,25 @@ export async function GET(
       return NextResponse.json({ error: "Permission denied" }, { status: 403 })
     }
 
-    const db = getDb()
-    const exceptionId = params.id
+    if (!user.company_id) {
+      return NextResponse.json({ error: "No company associated with user" }, { status: 404 })
+    }
 
     // Fetch exception details
-    const exception = db.prepare(`
-      SELECT
-        e.*,
-        s.name as subcontractor_name,
-        s.abn as subcontractor_abn,
-        p.name as project_name,
-        creator.name as created_by_name,
-        creator.email as created_by_email,
-        approver.name as approved_by_name,
-        c.name as company_name
-      FROM exceptions e
-      JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      JOIN projects p ON ps.project_id = p.id
-      JOIN users creator ON e.created_by_user_id = creator.id
-      LEFT JOIN users approver ON e.approved_by_user_id = approver.id
-      JOIN companies c ON p.company_id = c.id
-      WHERE e.id = ? AND p.company_id = ?
-    `).get(exceptionId, user.company_id) as ExceptionData | undefined
+    const exception = await convex.query(api.exceptions.getForAuditTrail, {
+      id: exceptionId as Id<"exceptions">,
+      companyId: user.company_id as Id<"companies">,
+    })
 
     if (!exception) {
       return NextResponse.json({ error: "Exception not found" }, { status: 404 })
     }
 
     // Fetch audit log entries for this exception
-    const auditLogs = db.prepare(`
-      SELECT
-        al.id,
-        al.action,
-        al.details,
-        al.created_at,
-        al.ip_address,
-        u.name as user_name,
-        u.email as user_email
-      FROM audit_logs al
-      LEFT JOIN users u ON al.user_id = u.id
-      WHERE al.entity_type = 'exception' AND al.entity_id = ?
-      ORDER BY al.created_at ASC
-    `).all(exceptionId) as AuditLogEntry[]
+    const auditLogs = await convex.query(api.auditLogs.getByEntityWithDetails, {
+      entityType: "exception",
+      entityId: exceptionId,
+    }) as AuditLogEntry[]
 
     // Dynamic import pdf-lib to reduce bundle size (~200KB)
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
@@ -147,7 +109,7 @@ export async function GET(
     const statusLabel = exception.status.charAt(0).toUpperCase() + exception.status.slice(1).replace('_', ' ')
     const riskLabel = exception.risk_level.charAt(0).toUpperCase() + exception.risk_level.slice(1)
 
-    const exceptionInfo = [
+    const exceptionInfo: [string, string][] = [
       ["Exception ID:", exception.id],
       ["Issue Summary:", exception.issue_summary],
       ["Project:", exception.project_name],
@@ -347,7 +309,7 @@ function wrapText(text: string, font: any, fontSize: number, maxWidth: number): 
 
   for (const word of words) {
     const testLine = currentLine ? `${currentLine} ${word}` : word
-    const width = font.widthOfTextAtSize(testLine, fontSize)
+    const width = (font as any).widthOfTextAtSize(testLine, fontSize)
 
     if (width > maxWidth && currentLine) {
       lines.push(currentLine)

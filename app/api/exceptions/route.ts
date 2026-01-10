@@ -1,66 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken, verifyPassword } from '@/lib/auth'
 
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
+
 // Helper function to check and update expired exceptions
-function checkExpiredExceptions(companyId: string) {
-  const db = getDb()
-  const now = new Date().toISOString()
-
-  // Find all active exceptions that have expired
-  // Only check exceptions with expiration_type that have an expires_at date (not permanent or until_resolved)
-  const expiredExceptions = db.prepare(`
-    SELECT e.id, e.project_subcontractor_id
-    FROM exceptions e
-    JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-    JOIN projects p ON ps.project_id = p.id
-    WHERE e.status = 'active'
-      AND e.expires_at IS NOT NULL
-      AND e.expires_at < ?
-      AND e.expiration_type IN ('fixed_duration', 'specific_date')
-      AND p.company_id = ?
-  `).all(now, companyId) as { id: string; project_subcontractor_id: string }[]
-
-  // Update each expired exception
-  for (const exception of expiredExceptions) {
-    // Update exception status to expired
-    db.prepare(`
-      UPDATE exceptions
-      SET status = 'expired', updated_at = datetime('now')
-      WHERE id = ?
-    `).run(exception.id)
-
-    // Check if there are other active exceptions for this project_subcontractor
-    const otherActiveExceptions = db.prepare(`
-      SELECT COUNT(*) as count
-      FROM exceptions
-      WHERE project_subcontractor_id = ?
-        AND status = 'active'
-    `).get(exception.project_subcontractor_id) as { count: number }
-
-    // If no other active exceptions, revert to non_compliant
-    if (otherActiveExceptions.count === 0) {
-      db.prepare(`
-        UPDATE project_subcontractors
-        SET status = 'non_compliant', updated_at = datetime('now')
-        WHERE id = ?
-      `).run(exception.project_subcontractor_id)
-    }
-
-    // Log the expiration
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, NULL, 'exception', ?, 'expire', ?)
-    `).run(
-      uuidv4(),
-      companyId,
-      exception.id,
-      JSON.stringify({ reason: 'Automatic expiration', expired_at: now })
-    )
+async function checkExpiredExceptions(companyId: string) {
+  try {
+    // Use Convex mutation to expire old exceptions
+    await convex.mutation(api.exceptions.expireOld, {})
+  } catch (error) {
+    console.error('Error expiring exceptions:', error)
   }
-
-  return expiredExceptions.length
 }
 
 // GET /api/exceptions - List all exceptions for the company
@@ -77,77 +30,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
     // Check and update any expired exceptions for this company
-    if (user.company_id) {
-      checkExpiredExceptions(user.company_id)
-    }
+    await checkExpiredExceptions(user.company_id)
 
     // Get exceptions based on user role
-    let exceptions
-    if (['admin', 'risk_manager'].includes(user.role)) {
-      // Admin and risk_manager see all company exceptions
-      exceptions = db.prepare(`
-        SELECT e.*,
-          ps.subcontractor_id,
-          ps.project_id,
-          s.name as subcontractor_name,
-          p.name as project_name,
-          creator.name as created_by_name,
-          approver.name as approved_by_name
-        FROM exceptions e
-        JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-        JOIN subcontractors s ON ps.subcontractor_id = s.id
-        JOIN projects p ON ps.project_id = p.id
-        JOIN users creator ON e.created_by_user_id = creator.id
-        LEFT JOIN users approver ON e.approved_by_user_id = approver.id
-        WHERE p.company_id = ?
-        ORDER BY e.created_at DESC
-      `).all(user.company_id)
-    } else if (['project_manager', 'project_administrator'].includes(user.role)) {
-      // Project managers only see exceptions for their assigned projects
-      exceptions = db.prepare(`
-        SELECT e.*,
-          ps.subcontractor_id,
-          ps.project_id,
-          s.name as subcontractor_name,
-          p.name as project_name,
-          creator.name as created_by_name,
-          approver.name as approved_by_name
-        FROM exceptions e
-        JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-        JOIN subcontractors s ON ps.subcontractor_id = s.id
-        JOIN projects p ON ps.project_id = p.id
-        JOIN users creator ON e.created_by_user_id = creator.id
-        LEFT JOIN users approver ON e.approved_by_user_id = approver.id
-        WHERE p.company_id = ? AND p.project_manager_id = ?
-        ORDER BY e.created_at DESC
-      `).all(user.company_id, user.id)
-    } else {
-      // Read-only users see all company exceptions
-      exceptions = db.prepare(`
-        SELECT e.*,
-          ps.subcontractor_id,
-          ps.project_id,
-          s.name as subcontractor_name,
-          p.name as project_name,
-          creator.name as created_by_name,
-          approver.name as approved_by_name
-        FROM exceptions e
-        JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-        JOIN subcontractors s ON ps.subcontractor_id = s.id
-        JOIN projects p ON ps.project_id = p.id
-        JOIN users creator ON e.created_by_user_id = creator.id
-        LEFT JOIN users approver ON e.approved_by_user_id = approver.id
-        WHERE p.company_id = ?
-        ORDER BY e.created_at DESC
-      `).all(user.company_id)
-    }
+    const filterByProjectManagerOnly = ['project_manager', 'project_administrator'].includes(user.role)
+
+    const result = await convex.query(api.exceptions.listByCompany, {
+      companyId: user.company_id as Id<"companies">,
+      filterByUserId: filterByProjectManagerOnly ? user.id as Id<"users"> : undefined,
+      filterByProjectManagerOnly,
+    })
 
     return NextResponse.json({
-      exceptions,
-      total: exceptions.length
+      exceptions: result.exceptions,
+      total: result.total,
     })
   } catch (error) {
     console.error('Get exceptions error:', error)
@@ -207,125 +108,78 @@ export async function POST(request: NextRequest) {
       }
 
       // Verify password
-      const db = getDb()
-      const userWithPassword = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as { password_hash: string } | undefined
-
+      const userWithPassword = await convex.query(api.users.getByEmailInternal, { email: user.email })
       if (!userWithPassword) {
         return NextResponse.json({ error: 'User not found' }, { status: 404 })
       }
 
-      const passwordValid = await verifyPassword(password, userWithPassword.password_hash)
+      const passwordValid = await verifyPassword(password, userWithPassword.passwordHash)
       if (!passwordValid) {
         return NextResponse.json({ error: 'Incorrect password' }, { status: 401 })
       }
     }
 
-    const db = getDb()
-
     // Verify project_subcontractor exists and user has access
-    const projectSubcontractor = db.prepare(`
-      SELECT ps.*, p.company_id, p.project_manager_id
-      FROM project_subcontractors ps
-      JOIN projects p ON ps.project_id = p.id
-      WHERE ps.id = ?
-    `).get(projectSubcontractorId) as {
-      id: string
-      project_id: string
-      subcontractor_id: string
-      company_id: string
-      project_manager_id: string | null
-    } | undefined
+    const projectSubcontractor = await convex.query(api.projectSubcontractors.getByIdWithProject, {
+      id: projectSubcontractorId as Id<"projectSubcontractors">,
+    })
 
     if (!projectSubcontractor) {
       return NextResponse.json({ error: 'Project subcontractor not found' }, { status: 404 })
     }
 
-    if (projectSubcontractor.company_id !== user.company_id) {
+    if (projectSubcontractor.companyId !== user.company_id) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
     // Project managers can only create exceptions for their assigned projects
-    if (user.role === 'project_manager' && projectSubcontractor.project_manager_id !== user.id) {
+    if (user.role === 'project_manager' && projectSubcontractor.projectManagerId !== user.id) {
       return NextResponse.json({ error: 'You can only create exceptions for your assigned projects' }, { status: 403 })
     }
 
     // Create exception
-    const exceptionId = uuidv4()
     const validRiskLevels = ['low', 'medium', 'high']
     const finalRiskLevel = riskLevel && validRiskLevels.includes(riskLevel) ? riskLevel : 'medium'
 
-    // Risk managers auto-approve their own exceptions
-    const autoApproved = ['admin', 'risk_manager'].includes(user.role)
-    const status = autoApproved ? 'active' : 'pending_approval'
+    // Risk managers and admins auto-approve their own exceptions
+    const autoApprove = ['admin', 'risk_manager'].includes(user.role)
 
-    db.prepare(`
-      INSERT INTO exceptions (
-        id, project_subcontractor_id, verification_id, issue_summary, reason,
-        risk_level, created_by_user_id, approved_by_user_id, approved_at,
-        expires_at, expiration_type, status
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      exceptionId,
-      projectSubcontractorId,
-      verificationId || null,
-      issueSummary.trim(),
-      reason.trim(),
-      finalRiskLevel,
-      user.id,
-      autoApproved ? user.id : null,
-      autoApproved ? new Date().toISOString() : null,
-      expiresAt || null,
-      expirationType || 'until_resolved',
-      status
-    )
-
-    // If exception is auto-approved (active), update project_subcontractor status to 'exception'
-    if (autoApproved) {
-      db.prepare(`
-        UPDATE project_subcontractors
-        SET status = 'exception', updated_at = datetime('now')
-        WHERE id = ?
-      `).run(projectSubcontractorId)
-    }
+    const result = await convex.mutation(api.exceptions.createWithAutoApproval, {
+      projectSubcontractorId: projectSubcontractorId as Id<"projectSubcontractors">,
+      verificationId: verificationId ? verificationId as Id<"verifications"> : undefined,
+      issueSummary: issueSummary.trim(),
+      reason: reason.trim(),
+      riskLevel: finalRiskLevel as 'low' | 'medium' | 'high',
+      createdByUserId: user.id as Id<"users">,
+      expiresAt: expiresAt ? new Date(expiresAt).getTime() : undefined,
+      expirationType: (expirationType || 'until_resolved') as 'until_resolved' | 'fixed_duration' | 'specific_date' | 'permanent',
+      autoApprove,
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'exception', ?, 'create', ?)
-    `).run(
-      uuidv4(),
-      user.company_id,
-      user.id,
-      exceptionId,
-      JSON.stringify({
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'exception',
+      entityId: result.exceptionId,
+      action: 'create',
+      details: {
         issueSummary: issueSummary.trim(),
         riskLevel: finalRiskLevel,
         expirationType: expirationType || 'until_resolved',
-        permanent: expirationType === 'permanent'
-      })
-    )
+        permanent: expirationType === 'permanent',
+      },
+    })
 
     // Get the created exception with full details
-    const exception = db.prepare(`
-      SELECT e.*,
-        ps.subcontractor_id,
-        ps.project_id,
-        s.name as subcontractor_name,
-        p.name as project_name,
-        creator.name as created_by_name
-      FROM exceptions e
-      JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      JOIN projects p ON ps.project_id = p.id
-      JOIN users creator ON e.created_by_user_id = creator.id
-      WHERE e.id = ?
-    `).get(exceptionId)
+    const exception = await convex.query(api.exceptions.getByIdWithDetails, {
+      id: result.exceptionId,
+    })
 
     return NextResponse.json({
       success: true,
-      message: `Exception ${autoApproved ? 'created and approved' : 'created and pending approval'}`,
-      exception
+      message: `Exception ${autoApprove ? 'created and approved' : 'created and pending approval'}`,
+      exception,
     }, { status: 201 })
 
   } catch (error) {
@@ -364,27 +218,16 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Action must be approve or reject' }, { status: 400 })
     }
 
-    const db = getDb()
-
     // Get exception with company verification
-    const exception = db.prepare(`
-      SELECT e.*, ps.id as project_subcontractor_id, p.company_id
-      FROM exceptions e
-      JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-      JOIN projects p ON ps.project_id = p.id
-      WHERE e.id = ?
-    `).get(exceptionId) as {
-      id: string
-      status: string
-      project_subcontractor_id: string
-      company_id: string
-    } | undefined
+    const exception = await convex.query(api.exceptions.getByIdWithDetails, {
+      id: exceptionId as Id<"exceptions">,
+    })
 
     if (!exception) {
       return NextResponse.json({ error: 'Exception not found' }, { status: 404 })
     }
 
-    if (exception.company_id !== user.company_id) {
+    if (exception.project_company_id !== user.company_id) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
@@ -392,59 +235,47 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Exception is not pending approval' }, { status: 400 })
     }
 
-    const newStatus = action === 'approve' ? 'active' : 'rejected'
-
     // Update exception status
-    db.prepare(`
-      UPDATE exceptions
-      SET status = ?, approved_by_user_id = ?, approved_at = datetime('now'), updated_at = datetime('now')
-      WHERE id = ?
-    `).run(newStatus, user.id, exceptionId)
-
-    // If approved, update project_subcontractor status to 'exception'
     if (action === 'approve') {
-      db.prepare(`
-        UPDATE project_subcontractors
-        SET status = 'exception', updated_at = datetime('now')
-        WHERE id = ?
-      `).run(exception.project_subcontractor_id)
+      await convex.mutation(api.exceptions.approve, {
+        id: exceptionId as Id<"exceptions">,
+        approvedByUserId: user.id as Id<"users">,
+      })
+
+      // Update project_subcontractor status to 'exception'
+      await convex.mutation(api.projectSubcontractors.updateStatus, {
+        id: exception.projectSubcontractorId as Id<"projectSubcontractors">,
+        status: 'exception',
+      })
+    } else {
+      await convex.mutation(api.exceptions.reject, {
+        id: exceptionId as Id<"exceptions">,
+        rejectedByUserId: user.id as Id<"users">,
+      })
     }
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'exception', ?, ?, ?)
-    `).run(
-      uuidv4(),
-      user.company_id,
-      user.id,
-      exceptionId,
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'exception',
+      entityId: exceptionId,
       action,
-      JSON.stringify({ previousStatus: 'pending_approval', newStatus })
-    )
+      details: {
+        previousStatus: 'pending_approval',
+        newStatus: action === 'approve' ? 'active' : 'rejected',
+      },
+    })
 
     // Get updated exception
-    const updatedException = db.prepare(`
-      SELECT e.*,
-        ps.subcontractor_id,
-        ps.project_id,
-        s.name as subcontractor_name,
-        p.name as project_name,
-        creator.name as created_by_name,
-        approver.name as approved_by_name
-      FROM exceptions e
-      JOIN project_subcontractors ps ON e.project_subcontractor_id = ps.id
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      JOIN projects p ON ps.project_id = p.id
-      JOIN users creator ON e.created_by_user_id = creator.id
-      LEFT JOIN users approver ON e.approved_by_user_id = approver.id
-      WHERE e.id = ?
-    `).get(exceptionId)
+    const updatedException = await convex.query(api.exceptions.getByIdWithDetails, {
+      id: exceptionId as Id<"exceptions">,
+    })
 
     return NextResponse.json({
       success: true,
       message: `Exception ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
-      exception: updatedException
+      exception: updatedException,
     })
 
   } catch (error) {

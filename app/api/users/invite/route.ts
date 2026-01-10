@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { hashPassword, getUserByToken } from '@/lib/auth'
+import { v4 as uuidv4 } from 'uuid'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,6 +25,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Only admins can invite users' }, { status: 403 })
     }
 
+    if (!currentUser.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { email, name, role, password } = body
 
@@ -33,7 +41,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate role
-    const validRoles = ['admin', 'risk_manager', 'project_manager', 'project_administrator', 'read_only']
+    const validRoles = ['admin', 'risk_manager', 'project_manager', 'project_administrator', 'read_only'] as const
     if (!validRoles.includes(role)) {
       return NextResponse.json(
         { error: `Invalid role. Must be one of: ${validRoles.join(', ')}` },
@@ -41,10 +49,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const db = getDb()
-
     // Check if email already exists
-    const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase())
+    const existingUser = await convex.query(api.users.getByEmail, {
+      email: email.toLowerCase(),
+    })
+
     if (existingUser) {
       return NextResponse.json(
         { error: 'A user with this email already exists' },
@@ -53,7 +62,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Create user with pending invitation status
-    const userId = uuidv4()
     const invitationToken = uuidv4()
     // For testing: if password provided, use it; otherwise generate a temporary one
     const tempPassword = password || `Temp${Date.now()}!`
@@ -63,16 +71,26 @@ export async function POST(request: NextRequest) {
     const expiresAt = new Date()
     expiresAt.setDate(expiresAt.getDate() + 7)
 
-    db.prepare(`
-      INSERT INTO users (id, company_id, email, password_hash, name, role, invitation_status, invitation_token, invitation_expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
-    `).run(userId, currentUser.company_id, email.toLowerCase(), passwordHash, name.trim(), role, invitationToken, expiresAt.toISOString())
+    const userId = await convex.mutation(api.users.create, {
+      companyId: currentUser.company_id as Id<"companies">,
+      email: email.toLowerCase(),
+      passwordHash,
+      name: name.trim(),
+      role: role as typeof validRoles[number],
+      invitationStatus: 'pending',
+      invitationToken,
+      invitationExpiresAt: expiresAt.getTime(),
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'user', ?, 'invite', ?)
-    `).run(uuidv4(), currentUser.company_id, currentUser.id, userId, JSON.stringify({ email: email.toLowerCase(), role }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: currentUser.company_id as Id<"companies">,
+      userId: currentUser.id as Id<"users">,
+      entityType: 'user',
+      entityId: userId,
+      action: 'invite',
+      details: { email: email.toLowerCase(), role },
+    })
 
     // In development mode, log the invitation link
     const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/accept-invite?token=${invitationToken}`
@@ -86,7 +104,7 @@ Subject: You've been invited to join RiskShield AI
 
 Hi ${name.trim()},
 
-You've been invited to join the ${currentUser.company_id} team on RiskShield AI.
+You've been invited to join the team on RiskShield AI.
 
 Click here to accept your invitation:
 ${inviteUrl}
@@ -107,10 +125,10 @@ RiskShield AI Team
         email: email.toLowerCase(),
         name: name.trim(),
         role,
-        invitation_status: 'pending'
+        invitation_status: 'pending',
       },
       // For development testing only
-      ...(process.env.NODE_ENV !== 'production' && { tempPassword, inviteUrl })
+      ...(process.env.NODE_ENV !== 'production' && { tempPassword, inviteUrl }),
     }, { status: 201 })
 
   } catch (error) {

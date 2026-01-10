@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, isProduction, getSupabase } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import {
   getProcoreConfig,
   isProcoreDevMode,
@@ -8,15 +9,7 @@ import {
   createMockOAuthTokens,
 } from '@/lib/procore'
 
-interface OAuthStateRecord {
-  id: string
-  user_id: string
-  company_id: string
-  provider: string
-  state: string
-  created_at: string
-  expires_at: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface ProcoreTokenResponse {
   access_token: string
@@ -60,67 +53,23 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Verify state token
-    let stateRecord: OAuthStateRecord | undefined
+    // Verify state token using Convex
+    console.log(`[Procore] Callback received - state: ${state?.substring(0, 8)}...`)
+    console.log(`[Procore] Looking up state in Convex...`)
 
-    console.log(`[Procore] Callback received - state: ${state?.substring(0, 8)}..., isProduction: ${isProduction}`)
-
-    if (isProduction) {
-      const supabase = getSupabase()
-      console.log(`[Procore] Looking up state in Supabase...`)
-
-      const { data, error: queryError } = await supabase
-        .from('oauth_states')
-        .select('*')
-        .eq('state', state)
-        .eq('provider', 'procore')
-        .gt('expires_at', new Date().toISOString())
-        .single()
-
-      if (queryError) {
-        console.error('[Procore] State lookup error:', queryError)
-        // Also try without expiry check to see if state exists but expired
-        const { data: expiredCheck } = await supabase
-          .from('oauth_states')
-          .select('*')
-          .eq('state', state)
-          .single()
-        if (expiredCheck) {
-          console.log('[Procore] State found but may be expired:', expiredCheck)
-        } else {
-          console.log('[Procore] State not found in database at all')
-        }
-      }
-
-      if (data) {
-        console.log(`[Procore] State found! company_id: ${data.company_id}`)
-        stateRecord = data as OAuthStateRecord
-      }
-
-      // Delete used state
-      if (stateRecord) {
-        await supabase.from('oauth_states').delete().eq('state', state)
-      }
-    } else {
-      const db = getDb()
-      stateRecord = db.prepare(`
-        SELECT os.*, u.company_id
-        FROM oauth_states os
-        JOIN users u ON os.user_id = u.id
-        WHERE os.state = ? AND os.provider = 'procore' AND os.expires_at > datetime('now')
-      `).get(state) as OAuthStateRecord | undefined
-
-      // Delete used state
-      if (stateRecord) {
-        db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state)
-      }
-    }
+    const stateRecord = await convex.query(api.integrations.getOAuthState, { state })
 
     if (!stateRecord) {
+      console.log('[Procore] State not found or expired')
       return NextResponse.redirect(
         new URL('/dashboard/settings/integrations?error=invalid_state', request.url)
       )
     }
+
+    console.log(`[Procore] State found! company_id: ${stateRecord.companyId}`)
+
+    // Delete used state
+    await convex.mutation(api.integrations.deleteOAuthState, { state })
 
     const config = getProcoreConfig()
     const isDevMode = isProcoreDevMode()
@@ -203,57 +152,29 @@ export async function GET(request: NextRequest) {
     console.log(`[Procore] Found ${companies.length} companies`)
 
     // Store tokens (with pending company selection if multiple companies)
-    const connectionId = uuidv4()
     const hasMultipleCompanies = companies.length > 1
-    const tokenExpiresAt = new Date(Date.now() + (tokens.expires_in || 7200) * 1000).toISOString()
-    const now = new Date().toISOString()
+    const tokenExpiresAt = Date.now() + (tokens.expires_in || 7200) * 1000
 
     if (hasMultipleCompanies) {
       // Store tokens with pending_company_selection flag
-      if (isProduction) {
-        const supabase = getSupabase()
-        console.log(`[Procore] Storing connection with pending company selection...`)
-        const { error: upsertError } = await supabase.from('oauth_connections').upsert({
-          id: connectionId,
-          company_id: stateRecord.company_id,
+      console.log(`[Procore] Storing connection with pending company selection...`)
+      try {
+        await convex.mutation(api.integrations.upsertConnection, {
+          companyId: stateRecord.companyId as Id<"companies">,
           provider: 'procore',
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          token_expires_at: tokenExpiresAt,
-          pending_company_selection: true,
-          created_at: now,
-          updated_at: now
-        }, { onConflict: 'company_id,provider' })
-        if (upsertError) {
-          console.error('[Procore] Failed to store connection:', upsertError)
-          return NextResponse.redirect(
-            new URL(`/dashboard/settings/integrations?error=db_error&details=${encodeURIComponent(upsertError.message)}`, request.url)
-          )
-        }
-      } else {
-        const db = getDb()
-        db.prepare(`
-          INSERT INTO oauth_connections (
-            id, company_id, provider, access_token, refresh_token,
-            token_expires_at, pending_company_selection, created_at, updated_at
-          )
-          VALUES (?, ?, 'procore', ?, ?, datetime('now', '+' || ? || ' seconds'), 1, datetime('now'), datetime('now'))
-          ON CONFLICT(company_id, provider) DO UPDATE SET
-            access_token = excluded.access_token,
-            refresh_token = excluded.refresh_token,
-            token_expires_at = excluded.token_expires_at,
-            pending_company_selection = 1,
-            updated_at = datetime('now')
-        `).run(
-          connectionId,
-          stateRecord.company_id,
-          tokens.access_token,
-          tokens.refresh_token,
-          tokens.expires_in || 7200
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          tokenExpiresAt: tokenExpiresAt,
+          pendingCompanySelection: true,
+        })
+      } catch (err) {
+        console.error('[Procore] Failed to store connection:', err)
+        return NextResponse.redirect(
+          new URL(`/dashboard/settings/integrations?error=db_error`, request.url)
         )
       }
 
-      console.log(`[Procore] OAuth tokens stored for company ${stateRecord.company_id}, pending company selection`)
+      console.log(`[Procore] OAuth tokens stored for company ${stateRecord.companyId}, pending company selection`)
 
       // Redirect to company selection
       return NextResponse.redirect(
@@ -264,53 +185,22 @@ export async function GET(request: NextRequest) {
       const procoreCompany = companies[0]
       console.log(`[Procore] Single company found: ${procoreCompany.name} (ID: ${procoreCompany.id})`)
 
-      if (isProduction) {
-        const supabase = getSupabase()
-        console.log(`[Procore] Storing connection for company ${procoreCompany.name}...`)
-        const { error: upsertError } = await supabase.from('oauth_connections').upsert({
-          id: connectionId,
-          company_id: stateRecord.company_id,
+      console.log(`[Procore] Storing connection for company ${procoreCompany.name}...`)
+      try {
+        await convex.mutation(api.integrations.upsertConnection, {
+          companyId: stateRecord.companyId as Id<"companies">,
           provider: 'procore',
-          access_token: tokens.access_token,
-          refresh_token: tokens.refresh_token,
-          token_expires_at: tokenExpiresAt,
-          procore_company_id: procoreCompany.id,
-          procore_company_name: procoreCompany.name,
-          pending_company_selection: false,
-          created_at: now,
-          updated_at: now
-        }, { onConflict: 'company_id,provider' })
-        if (upsertError) {
-          console.error('[Procore] Failed to store connection:', upsertError)
-          return NextResponse.redirect(
-            new URL(`/dashboard/settings/integrations?error=db_error&details=${encodeURIComponent(upsertError.message)}`, request.url)
-          )
-        }
-      } else {
-        const db = getDb()
-        db.prepare(`
-          INSERT INTO oauth_connections (
-            id, company_id, provider, access_token, refresh_token,
-            token_expires_at, procore_company_id, procore_company_name,
-            pending_company_selection, created_at, updated_at
-          )
-          VALUES (?, ?, 'procore', ?, ?, datetime('now', '+' || ? || ' seconds'), ?, ?, 0, datetime('now'), datetime('now'))
-          ON CONFLICT(company_id, provider) DO UPDATE SET
-            access_token = excluded.access_token,
-            refresh_token = excluded.refresh_token,
-            token_expires_at = excluded.token_expires_at,
-            procore_company_id = excluded.procore_company_id,
-            procore_company_name = excluded.procore_company_name,
-            pending_company_selection = 0,
-            updated_at = datetime('now')
-        `).run(
-          connectionId,
-          stateRecord.company_id,
-          tokens.access_token,
-          tokens.refresh_token,
-          tokens.expires_in || 7200,
-          procoreCompany.id,
-          procoreCompany.name
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          tokenExpiresAt: tokenExpiresAt,
+          procoreCompanyId: procoreCompany.id,
+          procoreCompanyName: procoreCompany.name,
+          pendingCompanySelection: false,
+        })
+      } catch (err) {
+        console.error('[Procore] Failed to store connection:', err)
+        return NextResponse.redirect(
+          new URL(`/dashboard/settings/integrations?error=db_error`, request.url)
         )
       }
 

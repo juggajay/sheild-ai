@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, type Company } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
-import { v4 as uuidv4 } from 'uuid'
 import {
   createCheckoutSession,
   createOrGetCustomer,
@@ -11,6 +12,8 @@ import {
   TRIAL_CONFIG,
   type SubscriptionTier,
 } from '@/lib/stripe'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 /**
  * POST /api/stripe/create-checkout-session
@@ -59,8 +62,10 @@ export async function POST(request: NextRequest) {
 
     const subscriptionTier = tier as Exclude<SubscriptionTier, 'trial' | 'subcontractor'>
 
-    const db = getDb()
-    const company = db.prepare('SELECT * FROM companies WHERE id = ?').get(user.company_id) as Company | undefined
+    // Get company from Convex
+    const company = await convex.query(api.companies.getById, {
+      id: user.company_id as Id<"companies">,
+    })
 
     if (!company) {
       return NextResponse.json({ error: 'Company not found' }, { status: 404 })
@@ -74,25 +79,30 @@ export async function POST(request: NextRequest) {
       // Simulated mode - return a simulated success
       console.log('[Stripe Test Mode] Simulating checkout session creation')
 
+      // Calculate trial end date
+      const trialEndsAt = Date.now() + TRIAL_CONFIG.durationDays * 24 * 60 * 60 * 1000
+
       // Update company with simulated subscription
-      db.prepare(`
-        UPDATE companies SET
-          subscription_tier = ?,
-          subscription_status = 'trialing',
-          trial_ends_at = datetime('now', '+${TRIAL_CONFIG.durationDays} days'),
-          updated_at = datetime('now')
-        WHERE id = ?
-      `).run(subscriptionTier, user.company_id)
+      await convex.mutation(api.companies.updateSubscription, {
+        id: user.company_id as Id<"companies">,
+        subscriptionTier: subscriptionTier,
+        subscriptionStatus: 'trialing',
+        trialEndsAt,
+      })
 
       // Log the action
-      db.prepare(`
-        INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-        VALUES (?, ?, ?, 'subscription', ?, 'create_checkout', ?)
-      `).run(uuidv4(), user.company_id, user.id, user.company_id, JSON.stringify({
-        tier: subscriptionTier,
-        simulated: true,
-        trial_days: TRIAL_CONFIG.durationDays,
-      }))
+      await convex.mutation(api.auditLogs.create, {
+        companyId: user.company_id as Id<"companies">,
+        userId: user.id as Id<"users">,
+        entityType: 'subscription',
+        entityId: user.company_id,
+        action: 'create_checkout',
+        details: {
+          tier: subscriptionTier,
+          simulated: true,
+          trial_days: TRIAL_CONFIG.durationDays,
+        },
+      })
 
       return NextResponse.json({
         success: true,
@@ -103,6 +113,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Production mode - create actual Stripe checkout
+    const settings = company.settings as Record<string, unknown> || {}
+    const existingStripeCustomerId = settings.stripeCustomerId as string | undefined
+
     // Get or create Stripe customer
     const stripeCustomerId = await createOrGetCustomer({
       email: user.email,
@@ -111,11 +124,11 @@ export async function POST(request: NextRequest) {
     })
 
     // Update company with Stripe customer ID if not already set
-    if (!company.stripe_customer_id) {
-      db.prepare(`
-        UPDATE companies SET stripe_customer_id = ?, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(stripeCustomerId, user.company_id)
+    if (!existingStripeCustomerId) {
+      await convex.mutation(api.companies.updateStripeCustomerId, {
+        id: user.company_id as Id<"companies">,
+        stripeCustomerId,
+      })
     }
 
     // Create checkout session
@@ -131,14 +144,18 @@ export async function POST(request: NextRequest) {
     })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'subscription', ?, 'create_checkout', ?)
-    `).run(uuidv4(), user.company_id, user.id, user.company_id, JSON.stringify({
-      tier: subscriptionTier,
-      stripe_customer_id: stripeCustomerId,
-      trial_days: TRIAL_CONFIG.durationDays,
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'subscription',
+      entityId: user.company_id,
+      action: 'create_checkout',
+      details: {
+        tier: subscriptionTier,
+        stripe_customer_id: stripeCustomerId,
+        trial_days: TRIAL_CONFIG.durationDays,
+      },
+    })
 
     const sessionUrl = 'url' in session ? session.url : null
 

@@ -1,25 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 
-interface EmailTemplate {
-  id: string
-  company_id: string | null
-  type: string
-  name: string | null
-  subject: string | null
-  body: string | null
-  is_default: number
-  created_at: string
-  updated_at: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
-// Default templates for initialization
-const DEFAULT_TEMPLATES = [
-  {
-    type: 'deficiency',
-    name: 'Deficiency Notice',
+// Default templates for reset functionality
+const DEFAULT_TEMPLATES: Record<string, { subject: string; body: string }> = {
+  deficiency: {
     subject: 'Certificate of Currency Deficiency Notice - {{subcontractor_name}} / {{project_name}}',
     body: `Dear {{recipient_name}},
 
@@ -38,9 +27,7 @@ If you have any questions or need clarification on the requirements, please don'
 Best regards,
 RiskShield AI Compliance Team`
   },
-  {
-    type: 'confirmation',
-    name: 'Compliance Confirmed',
+  confirmation: {
     subject: 'Insurance Compliance Confirmed - {{subcontractor_name}} / {{project_name}}',
     body: `Dear {{recipient_name}},
 
@@ -55,9 +42,7 @@ Thank you for ensuring compliance with our insurance requirements. If you have a
 Best regards,
 RiskShield AI Compliance Team`
   },
-  {
-    type: 'expiration_reminder',
-    name: 'Expiration Reminder',
+  expiration_reminder: {
     subject: 'Certificate Expiring Soon - {{subcontractor_name}} / {{project_name}}',
     body: `Dear {{recipient_name}},
 
@@ -76,9 +61,7 @@ If you have any questions, please contact us.
 Best regards,
 RiskShield AI Compliance Team`
   },
-  {
-    type: 'follow_up_1',
-    name: 'First Follow-up',
+  follow_up_1: {
     subject: 'REMINDER: Certificate of Currency Required - {{subcontractor_name}} / {{project_name}}',
     body: `Dear {{recipient_name}},
 
@@ -94,9 +77,7 @@ Upload link: {{upload_link}}
 Best regards,
 RiskShield AI Compliance Team`
   },
-  {
-    type: 'follow_up_2',
-    name: 'Second Follow-up',
+  follow_up_2: {
     subject: 'URGENT: Certificate of Currency Still Required - {{subcontractor_name}} / {{project_name}}',
     body: `Dear {{recipient_name}},
 
@@ -112,9 +93,7 @@ Upload link: {{upload_link}}
 Best regards,
 RiskShield AI Compliance Team`
   },
-  {
-    type: 'follow_up_3',
-    name: 'Final Notice',
+  follow_up_3: {
     subject: 'FINAL NOTICE: Certificate of Currency Required - {{subcontractor_name}} / {{project_name}}',
     body: `Dear {{recipient_name}},
 
@@ -132,7 +111,7 @@ Upload link: {{upload_link}}
 Best regards,
 RiskShield AI Compliance Team`
   }
-]
+}
 
 // GET /api/email-templates - List all email templates
 export async function GET(request: NextRequest) {
@@ -148,40 +127,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
-    // Get templates for this company (or system defaults)
-    const templates = db.prepare(`
-      SELECT * FROM email_templates
-      WHERE company_id = ? OR (company_id IS NULL AND is_default = 1)
-      ORDER BY type, is_default DESC
-    `).all(user.company_id) as EmailTemplate[]
+    // Get templates for this company (or initialize defaults)
+    let templates = await convex.query(api.emailTemplates.listByCompanyWithDefaults, {
+      companyId: user.company_id as Id<"companies">,
+    })
 
-    // If no custom templates exist, return defaults
+    // If no templates exist, initialize them
     if (templates.length === 0) {
-      // Initialize with default templates
-      const insertStmt = db.prepare(`
-        INSERT INTO email_templates (id, company_id, type, name, subject, body, is_default)
-        VALUES (?, ?, ?, ?, ?, ?, 1)
-      `)
+      await convex.mutation(api.emailTemplates.initializeDefaults, {
+        companyId: user.company_id as Id<"companies">,
+      })
 
-      const insertedTemplates: EmailTemplate[] = []
-      for (const template of DEFAULT_TEMPLATES) {
-        const id = uuidv4()
-        insertStmt.run(id, user.company_id, template.type, template.name, template.subject, template.body)
-        insertedTemplates.push({
-          id,
-          company_id: user.company_id,
-          type: template.type,
-          name: template.name,
-          subject: template.subject,
-          body: template.body,
-          is_default: 1,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-      }
-      return NextResponse.json({ templates: insertedTemplates })
+      // Refetch after initialization
+      templates = await convex.query(api.emailTemplates.listByCompanyWithDefaults, {
+        companyId: user.company_id as Id<"companies">,
+      })
     }
 
     return NextResponse.json({ templates })
@@ -210,6 +174,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { id, subject, body: templateBody } = body
 
@@ -217,27 +185,27 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Template ID is required' }, { status: 400 })
     }
 
-    const db = getDb()
+    const updatedTemplate = await convex.mutation(api.emailTemplates.updateWithVerification, {
+      id: id as Id<"emailTemplates">,
+      companyId: user.company_id as Id<"companies">,
+      subject,
+      body: templateBody,
+    })
 
-    // Verify template belongs to this company
-    const template = db.prepare(`
-      SELECT * FROM email_templates WHERE id = ? AND company_id = ?
-    `).get(id, user.company_id) as EmailTemplate | undefined
-
-    if (!template) {
-      return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+    // Convert to legacy format
+    const template = {
+      id: updatedTemplate?._id,
+      company_id: updatedTemplate?.companyId || null,
+      type: updatedTemplate?.type,
+      name: updatedTemplate?.name || null,
+      subject: updatedTemplate?.subject || null,
+      body: updatedTemplate?.body || null,
+      is_default: updatedTemplate?.isDefault ? 1 : 0,
+      created_at: updatedTemplate?._creationTime ? new Date(updatedTemplate._creationTime).toISOString() : null,
+      updated_at: updatedTemplate?.updatedAt ? new Date(updatedTemplate.updatedAt).toISOString() : null,
     }
 
-    // Update the template
-    db.prepare(`
-      UPDATE email_templates
-      SET subject = ?, body = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(subject, templateBody, id)
-
-    const updatedTemplate = db.prepare(`SELECT * FROM email_templates WHERE id = ?`).get(id)
-
-    return NextResponse.json({ template: updatedTemplate })
+    return NextResponse.json({ template })
   } catch (error) {
     console.error('Update email template error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -263,27 +231,41 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { id, type } = body
 
-    const db = getDb()
-
     // Find the default template for this type
-    const defaultTemplate = DEFAULT_TEMPLATES.find(t => t.type === type)
+    const defaultTemplate = DEFAULT_TEMPLATES[type]
     if (!defaultTemplate) {
       return NextResponse.json({ error: 'No default template found for this type' }, { status: 404 })
     }
 
     // Update the template back to default
-    db.prepare(`
-      UPDATE email_templates
-      SET subject = ?, body = ?, updated_at = datetime('now')
-      WHERE id = ? AND company_id = ?
-    `).run(defaultTemplate.subject, defaultTemplate.body, id, user.company_id)
+    const updatedTemplate = await convex.mutation(api.emailTemplates.updateWithVerification, {
+      id: id as Id<"emailTemplates">,
+      companyId: user.company_id as Id<"companies">,
+      subject: defaultTemplate.subject,
+      body: defaultTemplate.body,
+    })
 
-    const updatedTemplate = db.prepare(`SELECT * FROM email_templates WHERE id = ?`).get(id)
+    // Convert to legacy format
+    const template = {
+      id: updatedTemplate?._id,
+      company_id: updatedTemplate?.companyId || null,
+      type: updatedTemplate?.type,
+      name: updatedTemplate?.name || null,
+      subject: updatedTemplate?.subject || null,
+      body: updatedTemplate?.body || null,
+      is_default: updatedTemplate?.isDefault ? 1 : 0,
+      created_at: updatedTemplate?._creationTime ? new Date(updatedTemplate._creationTime).toISOString() : null,
+      updated_at: updatedTemplate?.updatedAt ? new Date(updatedTemplate.updatedAt).toISOString() : null,
+    }
 
-    return NextResponse.json({ template: updatedTemplate })
+    return NextResponse.json({ template })
   } catch (error) {
     console.error('Reset email template error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

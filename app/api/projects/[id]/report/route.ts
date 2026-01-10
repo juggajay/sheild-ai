@@ -1,41 +1,11 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getDb } from "@/lib/db"
-import { getUserByToken } from "@/lib/auth"
-
-interface ProjectData {
-  id: string
-  name: string
-  address: string | null
-  state: string | null
-  status: string
-  start_date: string | null
-  end_date: string | null
-  estimated_value: number | null
-  forwarding_email: string | null
-  company_name: string
-}
-
-interface SubcontractorCompliance {
-  id: string
-  name: string
-  abn: string
-  trade: string | null
-  status: string
-  on_site_date: string | null
-  latest_document_status: string | null
-  deficiency_count: number
-}
-
-interface InsuranceRequirement {
-  coverage_type: string
-  minimum_limit: number | null
-  maximum_excess: number | null
-}
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 
 // GET /api/projects/[id]/report - Generate PDF compliance report
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get("auth_token")?.value
@@ -43,54 +13,32 @@ export async function GET(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
-    const db = getDb()
-    const projectId = params.id
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
+    }
 
-    // Fetch project details
-    const project = db.prepare(`
-      SELECT p.*, c.name as company_name
-      FROM projects p
-      JOIN companies c ON p.company_id = c.id
-      WHERE p.id = ? AND p.company_id = ?
-    `).get(projectId, user.company_id) as ProjectData | undefined
+    const { id: projectId } = await params
 
-    if (!project) {
+    // Get report data from Convex
+    const reportData = await convex.query(api.projects.getReportData, {
+      projectId: projectId as Id<"projects">,
+      companyId: user.companyId,
+    })
+
+    if (!reportData) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 })
     }
 
-    // Fetch insurance requirements
-    const requirements = db.prepare(`
-      SELECT coverage_type, minimum_limit, maximum_excess
-      FROM insurance_requirements
-      WHERE project_id = ?
-    `).all(projectId) as InsuranceRequirement[]
-
-    // Fetch subcontractors with compliance status
-    const subcontractors = db.prepare(`
-      SELECT
-        s.id,
-        s.name,
-        s.abn,
-        s.trade,
-        ps.status,
-        ps.on_site_date,
-        (SELECT v.status FROM verifications v
-         JOIN coc_documents cd ON v.coc_document_id = cd.id
-         WHERE cd.subcontractor_id = s.id AND cd.project_id = ?
-         ORDER BY v.created_at DESC LIMIT 1) as latest_document_status,
-        (SELECT COUNT(*) FROM verifications v
-         JOIN coc_documents cd ON v.coc_document_id = cd.id
-         WHERE cd.subcontractor_id = s.id AND cd.project_id = ? AND v.deficiencies IS NOT NULL AND v.deficiencies != '[]') as deficiency_count
-      FROM project_subcontractors ps
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      WHERE ps.project_id = ?
-      ORDER BY s.name
-    `).all(projectId, projectId, projectId) as SubcontractorCompliance[]
+    const { project, requirements, subcontractors } = reportData
 
     // Dynamic import pdf-lib to reduce bundle size (~200KB)
     const { PDFDocument, StandardFonts, rgb } = await import('pdf-lib')
@@ -140,13 +88,18 @@ export async function GET(
     })
     y -= 25
 
+    const formatDate = (timestamp: number | null | undefined) => {
+      if (!timestamp) return 'Not set'
+      return new Date(timestamp).toLocaleDateString('en-AU')
+    }
+
     const projectInfo = [
       ["Project Name:", project.name],
       ["Company:", project.company_name],
       ["Address:", project.address ? `${project.address}${project.state ? `, ${project.state}` : ''}` : 'Not specified'],
       ["Status:", project.status.charAt(0).toUpperCase() + project.status.slice(1).replace('_', ' ')],
-      ["Start Date:", project.start_date ? new Date(project.start_date).toLocaleDateString('en-AU') : 'Not set'],
-      ["End Date:", project.end_date ? new Date(project.end_date).toLocaleDateString('en-AU') : 'Not set'],
+      ["Start Date:", formatDate(project.start_date)],
+      ["End Date:", formatDate(project.end_date)],
       ["Estimated Value:", project.estimated_value ? `$${project.estimated_value.toLocaleString()}` : 'Not specified']
     ]
 
@@ -189,7 +142,7 @@ export async function GET(
       for (const req of requirements) {
         const coverageLabel = req.coverage_type
           .split('_')
-          .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+          .map((w: string) => w.charAt(0).toUpperCase() + w.slice(1))
           .join(' ')
 
         page.drawText(coverageLabel, { x: 50, y, size: 9, font: helvetica, color: rgb(0.2, 0.2, 0.2) })
@@ -201,10 +154,10 @@ export async function GET(
     y -= 30
 
     // Compliance Summary
-    const compliant = subcontractors.filter(s => s.status === 'compliant').length
-    const nonCompliant = subcontractors.filter(s => s.status === 'non_compliant').length
-    const pending = subcontractors.filter(s => s.status === 'pending').length
-    const withException = subcontractors.filter(s => s.status === 'exception').length
+    const compliant = subcontractors.filter((s: any) => s.status === 'compliant').length
+    const nonCompliant = subcontractors.filter((s: any) => s.status === 'non_compliant').length
+    const pending = subcontractors.filter((s: any) => s.status === 'pending').length
+    const withException = subcontractors.filter((s: any) => s.status === 'exception').length
 
     page.drawText("COMPLIANCE SUMMARY", {
       x: 50,

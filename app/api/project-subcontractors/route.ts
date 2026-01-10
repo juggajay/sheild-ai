@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // GET /api/project-subcontractors - List all project-subcontractor assignments
 export async function GET(request: NextRequest) {
@@ -16,69 +20,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
     // Get project subcontractors based on user role
-    let projectSubcontractors
-    if (['admin', 'risk_manager'].includes(user.role)) {
-      // Admin and risk_manager see all company project-subcontractors
-      projectSubcontractors = db.prepare(`
-        SELECT
-          ps.id,
-          ps.project_id,
-          ps.subcontractor_id,
-          ps.status,
-          ps.on_site_date,
-          p.name as project_name,
-          s.name as subcontractor_name,
-          s.abn as subcontractor_abn
-        FROM project_subcontractors ps
-        JOIN projects p ON ps.project_id = p.id
-        JOIN subcontractors s ON ps.subcontractor_id = s.id
-        WHERE p.company_id = ?
-        ORDER BY p.name, s.name
-      `).all(user.company_id)
-    } else if (['project_manager', 'project_administrator'].includes(user.role)) {
-      // Project managers only see their assigned projects
-      projectSubcontractors = db.prepare(`
-        SELECT
-          ps.id,
-          ps.project_id,
-          ps.subcontractor_id,
-          ps.status,
-          ps.on_site_date,
-          p.name as project_name,
-          s.name as subcontractor_name,
-          s.abn as subcontractor_abn
-        FROM project_subcontractors ps
-        JOIN projects p ON ps.project_id = p.id
-        JOIN subcontractors s ON ps.subcontractor_id = s.id
-        WHERE p.company_id = ? AND p.project_manager_id = ?
-        ORDER BY p.name, s.name
-      `).all(user.company_id, user.id)
-    } else {
-      // Read-only users see all but cannot create exceptions anyway
-      projectSubcontractors = db.prepare(`
-        SELECT
-          ps.id,
-          ps.project_id,
-          ps.subcontractor_id,
-          ps.status,
-          ps.on_site_date,
-          p.name as project_name,
-          s.name as subcontractor_name,
-          s.abn as subcontractor_abn
-        FROM project_subcontractors ps
-        JOIN projects p ON ps.project_id = p.id
-        JOIN subcontractors s ON ps.subcontractor_id = s.id
-        WHERE p.company_id = ?
-        ORDER BY p.name, s.name
-      `).all(user.company_id)
-    }
+    const filterByProjectManagerOnly = ['project_manager', 'project_administrator'].includes(user.role)
+
+    const projectSubcontractors = await convex.query(
+      api.projectSubcontractors.listByCompanyWithRoleFilter,
+      {
+        companyId: user.company_id as Id<"companies">,
+        userId: filterByProjectManagerOnly ? user.id as Id<"users"> : undefined,
+        filterByProjectManagerOnly,
+      }
+    )
 
     return NextResponse.json({
       projectSubcontractors,
-      total: projectSubcontractors.length
+      total: projectSubcontractors.length,
     })
   } catch (error) {
     console.error('Get project-subcontractors error:', error)

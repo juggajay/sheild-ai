@@ -1,29 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb, type Project } from '@/lib/db'
-import { getUserByToken } from '@/lib/auth'
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 import { resendInvitation } from '@/lib/invitation'
-
-// Helper function to check if user has access to project
-function canAccessProject(user: { id: string; company_id: string | null; role: string }, project: Project): boolean {
-  if (project.company_id !== user.company_id) {
-    return false
-  }
-
-  if (['admin', 'risk_manager'].includes(user.role)) {
-    return true
-  }
-
-  if (['project_manager', 'project_administrator'].includes(user.role)) {
-    return project.project_manager_id === user.id
-  }
-
-  return false
-}
 
 // POST /api/projects/[id]/subcontractors/[subId]/resend-invitation
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string; subId: string } }
+  { params }: { params: Promise<{ id: string; subId: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -32,9 +15,17 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only admin, risk_manager, project_manager can resend invitations
@@ -42,40 +33,41 @@ export async function POST(
       return NextResponse.json({ error: 'You do not have permission to resend invitations' }, { status: 403 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
+    const { id, subId } = await params
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    // Check access
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
     // Find the project-subcontractor assignment
-    const assignment = db.prepare(`
-      SELECT ps.id, ps.subcontractor_id, s.contact_email
-      FROM project_subcontractors ps
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      WHERE ps.project_id = ? AND ps.subcontractor_id = ?
-    `).get(params.id, params.subId) as {
-      id: string
-      subcontractor_id: string
-      contact_email: string | null
-    } | undefined
+    const assignment = await convex.query(api.projectSubcontractors.getByProjectAndSubcontractor, {
+      projectId: id as Id<"projects">,
+      subcontractorId: subId as Id<"subcontractors">,
+    })
 
     if (!assignment) {
       return NextResponse.json({ error: 'Subcontractor is not assigned to this project' }, { status: 404 })
     }
 
-    if (!assignment.contact_email) {
+    // Get subcontractor email
+    const subcontractor = await convex.query(api.subcontractors.getById, {
+      id: subId as Id<"subcontractors">,
+    })
+
+    if (!subcontractor?.contactEmail) {
       return NextResponse.json({ error: 'Subcontractor has no contact email' }, { status: 400 })
     }
 
     // Resend the invitation
-    const result = await resendInvitation(assignment.id)
+    const result = await resendInvitation(assignment._id)
 
     if (!result.success) {
       return NextResponse.json({ error: result.error || 'Failed to resend invitation' }, { status: 500 })
@@ -84,7 +76,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: 'Invitation resent successfully',
-      email: assignment.contact_email
+      email: subcontractor.contactEmail
     })
 
   } catch (error) {

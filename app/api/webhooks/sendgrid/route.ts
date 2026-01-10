@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import crypto from 'crypto'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // SendGrid webhook event types
 type SendGridEventType =
@@ -62,7 +66,7 @@ function verifyWebhookSignature(
 /**
  * Map SendGrid event to communication status
  */
-function mapEventToStatus(event: SendGridEventType): string | null {
+function mapEventToStatus(event: SendGridEventType): 'delivered' | 'opened' | 'failed' | null {
   switch (event) {
     case 'delivered':
       return 'delivered'
@@ -125,9 +129,6 @@ export async function POST(request: NextRequest) {
       events = [events]
     }
 
-    const db = getDb()
-    const now = new Date().toISOString()
-
     let processed = 0
     let updated = 0
 
@@ -150,20 +151,12 @@ export async function POST(request: NextRequest) {
       }
 
       // Find communications by recipient email that are in a state that can transition
-      // We look for recent emails (last 7 days) to this recipient
-      const communications = db.prepare(`
-        SELECT id, status, sent_at
-        FROM communications
-        WHERE recipient_email = ?
-          AND status IN ('pending', 'sent', 'delivered')
-          AND sent_at > datetime('now', '-7 days')
-        ORDER BY sent_at DESC
-        LIMIT 5
-      `).all(email) as Array<{
-        id: string
-        status: string
-        sent_at: string
-      }>
+      const communications = await convex.query(api.communications.getRecentByRecipientEmail, {
+        recipientEmail: email,
+        statuses: ['pending', 'sent', 'delivered'],
+        daysBack: 7,
+        limit: 5,
+      })
 
       if (communications.length === 0) {
         console.log('[SendGrid Webhook] No matching communication found for:', email)
@@ -173,48 +166,33 @@ export async function POST(request: NextRequest) {
       // Update the most recent matching communication
       const communication = communications[0]
 
-      // Only update if the new status is "higher" than current
-      // pending < sent < delivered < opened
-      // failed can come from any state
-      const statusPriority: Record<string, number> = {
-        'pending': 0,
-        'sent': 1,
-        'delivered': 2,
-        'opened': 3,
-        'failed': -1 // Special case
+      // Prepare update args
+      const updateArgs: {
+        id: Id<"communications">
+        status: 'delivered' | 'opened' | 'failed'
+        deliveredAt?: number
+        openedAt?: number
+      } = {
+        id: communication._id,
+        status: newStatus,
       }
 
-      const currentPriority = statusPriority[communication.status] ?? 0
-      const newPriority = statusPriority[newStatus] ?? 0
+      // Add timestamp for specific events
+      if (newStatus === 'delivered') {
+        updateArgs.deliveredAt = timestamp * 1000
+      } else if (newStatus === 'opened') {
+        updateArgs.openedAt = timestamp * 1000
+      }
 
-      // Update if new status is higher priority or if it's a failure
-      if (newStatus === 'failed' || newPriority > currentPriority) {
-        const updateFields: string[] = ['status = ?', 'updated_at = ?']
-        const updateValues: (string | null)[] = [newStatus, now]
+      const result = await convex.mutation(api.communications.updateFromWebhook, updateArgs)
 
-        // Add timestamp for specific events
-        if (newStatus === 'delivered') {
-          updateFields.push('delivered_at = ?')
-          updateValues.push(new Date(timestamp * 1000).toISOString())
-        } else if (newStatus === 'opened') {
-          updateFields.push('opened_at = ?')
-          updateValues.push(new Date(timestamp * 1000).toISOString())
-        }
-
-        updateValues.push(communication.id)
-
-        db.prepare(`
-          UPDATE communications
-          SET ${updateFields.join(', ')}
-          WHERE id = ?
-        `).run(...updateValues)
-
+      if (result.updated) {
         updated++
 
         console.log('[SendGrid Webhook] Updated communication:', {
-          id: communication.id,
-          previousStatus: communication.status,
-          newStatus,
+          id: communication._id,
+          previousStatus: result.previousStatus,
+          newStatus: result.newStatus,
           reason: reason || bounce_classification
         })
 
@@ -224,7 +202,7 @@ export async function POST(request: NextRequest) {
             email,
             reason,
             bounce_classification,
-            communicationId: communication.id
+            communicationId: communication._id
           })
         }
       }

@@ -1,28 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 
-interface Communication {
-  id: string
-  subcontractor_id: string
-  project_id: string
-  verification_id: string | null
-  type: 'deficiency' | 'follow_up' | 'confirmation' | 'expiration_reminder' | 'critical_alert'
-  channel: 'email' | 'sms'
-  recipient_email: string | null
-  cc_emails: string | null
-  subject: string | null
-  body: string | null
-  status: 'pending' | 'sent' | 'delivered' | 'opened' | 'failed'
-  sent_at: string | null
-  delivered_at: string | null
-  opened_at: string | null
-  created_at: string
-  updated_at: string
-  // Joined fields
-  subcontractor_name?: string
-  project_name?: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // GET /api/communications - List all communications
 export async function GET(request: NextRequest) {
@@ -38,21 +20,37 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
     // Get communications for this company's projects
-    const communications = db.prepare(`
-      SELECT
-        c.*,
-        s.name as subcontractor_name,
-        p.name as project_name
-      FROM communications c
-      JOIN subcontractors s ON c.subcontractor_id = s.id
-      JOIN projects p ON c.project_id = p.id
-      WHERE p.company_id = ?
-      ORDER BY c.created_at DESC
-      LIMIT 100
-    `).all(user.company_id) as Communication[]
+    const comms = await convex.query(api.communications.listByCompany, {
+      companyId: user.company_id as Id<"companies">,
+      limit: 100,
+    })
+
+    // Convert to legacy format for API compatibility
+    const communications = comms.map((c: any) => ({
+      id: c._id,
+      subcontractor_id: c.subcontractorId,
+      project_id: c.projectId,
+      verification_id: c.verificationId || null,
+      type: c.type,
+      channel: c.channel,
+      recipient_email: c.recipientEmail || null,
+      cc_emails: c.ccEmails || null,
+      subject: c.subject || null,
+      body: c.body || null,
+      status: c.status,
+      sent_at: c.sentAt ? new Date(c.sentAt).toISOString() : null,
+      delivered_at: c.deliveredAt ? new Date(c.deliveredAt).toISOString() : null,
+      opened_at: c.openedAt ? new Date(c.openedAt).toISOString() : null,
+      created_at: new Date(c._creationTime).toISOString(),
+      updated_at: c.updatedAt ? new Date(c.updatedAt).toISOString() : null,
+      subcontractor_name: c.subcontractor_name || null,
+      project_name: c.project_name || null,
+    }))
 
     return NextResponse.json({ communications })
   } catch (error) {

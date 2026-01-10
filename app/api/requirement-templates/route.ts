@@ -1,138 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 
-// Standard templates available to all companies
-const STANDARD_TEMPLATES = [
-  {
-    id: 'template-commercial',
-    name: 'Commercial Construction',
-    type: 'commercial',
-    requirements: [
-      {
-        coverage_type: 'public_liability',
-        minimum_limit: 20000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 10000,
-        principal_indemnity_required: true,
-        cross_liability_required: true
-      },
-      {
-        coverage_type: 'professional_indemnity',
-        minimum_limit: 5000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 5000,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      },
-      {
-        coverage_type: 'workers_comp',
-        minimum_limit: null,
-        limit_type: 'per_occurrence',
-        maximum_excess: null,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      }
-    ]
-  },
-  {
-    id: 'template-residential',
-    name: 'Residential Construction',
-    type: 'residential',
-    requirements: [
-      {
-        coverage_type: 'public_liability',
-        minimum_limit: 10000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 5000,
-        principal_indemnity_required: true,
-        cross_liability_required: false
-      },
-      {
-        coverage_type: 'workers_comp',
-        minimum_limit: null,
-        limit_type: 'per_occurrence',
-        maximum_excess: null,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      }
-    ]
-  },
-  {
-    id: 'template-civil',
-    name: 'Civil Infrastructure',
-    type: 'civil',
-    requirements: [
-      {
-        coverage_type: 'public_liability',
-        minimum_limit: 50000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 20000,
-        principal_indemnity_required: true,
-        cross_liability_required: true
-      },
-      {
-        coverage_type: 'professional_indemnity',
-        minimum_limit: 10000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 10000,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      },
-      {
-        coverage_type: 'workers_comp',
-        minimum_limit: null,
-        limit_type: 'per_occurrence',
-        maximum_excess: null,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      },
-      {
-        coverage_type: 'motor_vehicle',
-        minimum_limit: 30000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 5000,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      }
-    ]
-  },
-  {
-    id: 'template-fitout',
-    name: 'Commercial Fitout',
-    type: 'fitout',
-    requirements: [
-      {
-        coverage_type: 'public_liability',
-        minimum_limit: 10000000,
-        limit_type: 'per_occurrence',
-        maximum_excess: 5000,
-        principal_indemnity_required: true,
-        cross_liability_required: false
-      },
-      {
-        coverage_type: 'workers_comp',
-        minimum_limit: null,
-        limit_type: 'per_occurrence',
-        maximum_excess: null,
-        principal_indemnity_required: false,
-        cross_liability_required: false
-      }
-    ]
-  }
-]
-
-interface DbTemplate {
-  id: string
-  company_id: string | null
-  name: string
-  type: string
-  requirements: string
-  is_default: number
-  created_at: string
-  updated_at: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // GET /api/requirement-templates - Get all requirement templates
 export async function GET(request: NextRequest) {
@@ -148,36 +20,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
 
-    // Get custom templates for this company
-    const customTemplates = db.prepare(`
-      SELECT * FROM requirement_templates
-      WHERE company_id = ?
-      ORDER BY name
-    `).all(user.company_id) as DbTemplate[]
+    const result = await convex.query(api.requirementTemplates.listByCompany, {
+      companyId: user.company_id as Id<"companies">,
+    })
 
-    // Parse requirements JSON for custom templates
-    const parsedCustomTemplates = customTemplates.map(t => ({
-      ...t,
-      requirements: JSON.parse(t.requirements),
-      is_standard: false
-    }))
-
-    // Combine standard templates with custom templates
-    const allTemplates = [
-      ...STANDARD_TEMPLATES.map(t => ({
-        ...t,
-        company_id: null,
-        is_default: 0,
-        is_standard: true,
-        created_at: null,
-        updated_at: null
-      })),
-      ...parsedCustomTemplates
-    ]
-
-    return NextResponse.json({ templates: allTemplates })
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Get requirement templates error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -203,6 +54,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Only admins and risk managers can create templates' }, { status: 403 })
     }
 
+    if (!user.company_id) {
+      return NextResponse.json({ error: 'No company associated with user' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { name, requirements } = body
 
@@ -214,29 +69,38 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'At least one requirement is required' }, { status: 400 })
     }
 
-    const db = getDb()
-    const templateId = uuidv4()
-
-    db.prepare(`
-      INSERT INTO requirement_templates (id, company_id, name, type, requirements)
-      VALUES (?, ?, ?, 'custom', ?)
-    `).run(templateId, user.company_id, name.trim(), JSON.stringify(requirements))
+    const templateId = await convex.mutation(api.requirementTemplates.create, {
+      companyId: user.company_id as Id<"companies">,
+      name: name.trim(),
+      requirements,
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'requirement_template', ?, 'create', ?)
-    `).run(uuidv4(), user.company_id, user.id, templateId, JSON.stringify({ name }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'requirement_template',
+      entityId: templateId,
+      action: 'create',
+      details: { name },
+    })
 
-    const template = db.prepare('SELECT * FROM requirement_templates WHERE id = ?').get(templateId) as DbTemplate
+    const template = await convex.query(api.requirementTemplates.getById, {
+      id: templateId,
+    })
 
     return NextResponse.json({
       success: true,
       message: 'Requirement template created',
-      template: {
-        ...template,
-        requirements: JSON.parse(template.requirements)
-      }
+      template: template ? {
+        id: template._id,
+        company_id: template.companyId,
+        name: template.name,
+        type: template.type,
+        requirements: template.requirements,
+        is_default: template.isDefault,
+        is_standard: false,
+      } : null,
     }, { status: 201 })
   } catch (error) {
     console.error('Create requirement template error:', error)

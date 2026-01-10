@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server"
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from "@/lib/auth"
 import { cookies } from "next/headers"
-import { getDb } from "@/lib/db"
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 export async function POST() {
   try {
     const cookieStore = cookies()
-    const token = cookieStore.get("auth_token")?.value
+    const token = (await cookieStore).get("auth_token")?.value
 
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -23,13 +27,12 @@ export async function POST() {
     }
 
     // Delete the OAuth connection
-    const db = getDb()
-    const result = db.prepare(`
-      DELETE FROM oauth_connections
-      WHERE company_id = ? AND provider = 'google'
-    `).run(user.company_id)
+    const result = await convex.mutation(api.integrations.deleteConnection, {
+      companyId: user.company_id as Id<"companies">,
+      provider: 'google',
+    })
 
-    if (result.changes === 0) {
+    if (!result.deleted) {
       return NextResponse.json({ error: "No Google Workspace connection found" }, { status: 404 })
     }
 

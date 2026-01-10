@@ -1,33 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb, type Project } from '@/lib/db'
-import { getUserByToken } from '@/lib/auth'
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 import { sendSubcontractorInvitation } from '@/lib/invitation'
-
-// Helper function to check if user has access to project
-function canAccessProject(user: { id: string; company_id: string | null; role: string }, project: Project): boolean {
-  // Must be same company
-  if (project.company_id !== user.company_id) {
-    return false
-  }
-
-  // Admin, risk_manager, and read_only can access all company projects
-  if (['admin', 'risk_manager', 'read_only'].includes(user.role)) {
-    return true
-  }
-
-  // Project manager and project administrator can only access assigned projects
-  if (['project_manager', 'project_administrator'].includes(user.role)) {
-    return project.project_manager_id === user.id
-  }
-
-  return false
-}
 
 // GET /api/projects/[id]/subcontractors - List subcontractors for a project
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -36,41 +15,39 @@ export async function GET(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
-
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
-    // Check access
-    if (!canAccessProject(user, project)) {
+    const { id } = await params
+
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
+
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
     // Get subcontractors for this project
-    const subcontractors = db.prepare(`
-      SELECT
-        ps.id as project_subcontractor_id,
-        ps.status,
-        ps.on_site_date,
-        ps.created_at as assigned_at,
-        s.*
-      FROM project_subcontractors ps
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      WHERE ps.project_id = ?
-      ORDER BY s.name
-    `).all(params.id)
-
-    return NextResponse.json({
-      subcontractors,
-      total: subcontractors.length
+    const result = await convex.query(api.projectSubcontractors.getByProjectWithDetails, {
+      projectId: id as Id<"projects">,
     })
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Get project subcontractors error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -80,7 +57,7 @@ export async function GET(
 // POST /api/projects/[id]/subcontractors - Add subcontractor to project
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -89,9 +66,17 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only admin, risk_manager, project_manager can add subcontractors
@@ -99,15 +84,17 @@ export async function POST(
       return NextResponse.json({ error: 'You do not have permission to add subcontractors' }, { status: 403 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
+    const { id } = await params
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    // Check access
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
@@ -119,32 +106,45 @@ export async function POST(
     }
 
     // Verify subcontractor exists and belongs to same company
-    const subcontractor = db.prepare('SELECT * FROM subcontractors WHERE id = ? AND company_id = ?').get(subcontractorId, user.company_id)
-    if (!subcontractor) {
+    const subResult = await convex.query(api.projectSubcontractors.validateSubcontractor, {
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+      companyId: user.companyId,
+    })
+
+    if (!subResult.valid) {
       return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
     }
 
     // Check if already assigned
-    const existing = db.prepare('SELECT id FROM project_subcontractors WHERE project_id = ? AND subcontractor_id = ?').get(params.id, subcontractorId)
+    const existing = await convex.query(api.projectSubcontractors.getByProjectAndSubcontractor, {
+      projectId: id as Id<"projects">,
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+    })
+
     if (existing) {
       return NextResponse.json({ error: 'Subcontractor is already assigned to this project' }, { status: 400 })
     }
 
     // Create project_subcontractor assignment
-    const projectSubcontractorId = uuidv4()
-    db.prepare(`
-      INSERT INTO project_subcontractors (id, project_id, subcontractor_id, status, on_site_date)
-      VALUES (?, ?, ?, 'pending', ?)
-    `).run(projectSubcontractorId, params.id, subcontractorId, onSiteDate || null)
+    const projectSubcontractorId = await convex.mutation(api.projectSubcontractors.create, {
+      projectId: id as Id<"projects">,
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+      status: 'pending',
+      onSiteDate: onSiteDate ? new Date(onSiteDate).getTime() : undefined,
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'project_subcontractor', ?, 'create', ?)
-    `).run(uuidv4(), user.company_id, user.id, projectSubcontractorId, JSON.stringify({
-      projectId: params.id,
-      subcontractorId
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.companyId,
+      userId: user._id,
+      entityType: 'project_subcontractor',
+      entityId: projectSubcontractorId,
+      action: 'create',
+      details: {
+        projectId: id,
+        subcontractorId
+      },
+    })
 
     // Send invitation email (optional - controlled by sendInvitation param)
     const sendInvitation = body.sendInvitation !== false // Default to true
@@ -153,7 +153,7 @@ export async function POST(
 
     if (sendInvitation) {
       const invitationResult = await sendSubcontractorInvitation(
-        params.id,
+        id,
         subcontractorId,
         projectSubcontractorId
       )
@@ -181,7 +181,7 @@ export async function POST(
 // DELETE /api/projects/[id]/subcontractors - Remove subcontractor from project
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -190,9 +190,17 @@ export async function DELETE(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only admin, risk_manager, project_manager can remove subcontractors
@@ -200,15 +208,17 @@ export async function DELETE(
       return NextResponse.json({ error: 'You do not have permission to remove subcontractors' }, { status: 403 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
+    const { id } = await params
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    // Check access
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
@@ -220,29 +230,38 @@ export async function DELETE(
     }
 
     // Find the project_subcontractor record
-    const projectSubcontractor = db.prepare(`
-      SELECT ps.id, s.name as subcontractor_name
-      FROM project_subcontractors ps
-      JOIN subcontractors s ON ps.subcontractor_id = s.id
-      WHERE ps.project_id = ? AND ps.subcontractor_id = ?
-    `).get(params.id, subcontractorId) as { id: string; subcontractor_name: string } | undefined
+    const projectSubcontractor = await convex.query(api.projectSubcontractors.getByProjectAndSubcontractor, {
+      projectId: id as Id<"projects">,
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+    })
 
     if (!projectSubcontractor) {
       return NextResponse.json({ error: 'Subcontractor is not assigned to this project' }, { status: 404 })
     }
 
+    // Get subcontractor name for logging
+    const subcontractor = await convex.query(api.subcontractors.getById, {
+      id: subcontractorId as Id<"subcontractors">,
+    })
+
     // Delete the assignment (not the subcontractor itself)
-    db.prepare('DELETE FROM project_subcontractors WHERE id = ?').run(projectSubcontractor.id)
+    await convex.mutation(api.projectSubcontractors.remove, {
+      id: projectSubcontractor._id,
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'project_subcontractor', ?, 'delete', ?)
-    `).run(uuidv4(), user.company_id, user.id, projectSubcontractor.id, JSON.stringify({
-      projectId: params.id,
-      subcontractorId,
-      subcontractorName: projectSubcontractor.subcontractor_name
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.companyId,
+      userId: user._id,
+      entityType: 'project_subcontractor',
+      entityId: projectSubcontractor._id,
+      action: 'delete',
+      details: {
+        projectId: id,
+        subcontractorId,
+        subcontractorName: subcontractor?.name
+      },
+    })
 
     return NextResponse.json({
       success: true,

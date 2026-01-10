@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb, type Project } from '@/lib/db'
-import { getUserByToken } from '@/lib/auth'
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 
 // Valid coverage types
 const VALID_COVERAGE_TYPES = [
@@ -11,29 +10,14 @@ const VALID_COVERAGE_TYPES = [
   'professional_indemnity',
   'motor_vehicle',
   'contract_works'
-]
+] as const
 
-// Helper function to check if user can access project
-function canAccessProject(user: { id: string; company_id: string | null; role: string }, project: Project): boolean {
-  if (project.company_id !== user.company_id) {
-    return false
-  }
-
-  if (['admin', 'risk_manager', 'read_only'].includes(user.role)) {
-    return true
-  }
-
-  if (['project_manager', 'project_administrator'].includes(user.role)) {
-    return project.project_manager_id === user.id
-  }
-
-  return false
-}
+type CoverageType = typeof VALID_COVERAGE_TYPES[number]
 
 // GET /api/projects/[id]/requirements - Get project insurance requirements
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -42,23 +26,37 @@ export async function GET(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
-
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
-    if (!canAccessProject(user, project)) {
+    const { id } = await params
+
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
+
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
-    const requirements = db.prepare('SELECT * FROM insurance_requirements WHERE project_id = ?').all(params.id)
+    // Get insurance requirements
+    const requirements = await convex.query(api.insuranceRequirements.getByProject, {
+      projectId: id as Id<"projects">,
+    })
 
     return NextResponse.json({ requirements })
   } catch (error) {
@@ -70,7 +68,7 @@ export async function GET(
 // POST /api/projects/[id]/requirements - Add insurance requirement
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -79,9 +77,17 @@ export async function POST(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only admin and risk_manager can configure requirements
@@ -89,14 +95,17 @@ export async function POST(
       return NextResponse.json({ error: 'Only admins and risk managers can configure requirements' }, { status: 403 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
+    const { id } = await params
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
@@ -121,9 +130,10 @@ export async function POST(
     }
 
     // Check if this coverage type already exists for the project
-    const existing = db.prepare(
-      'SELECT id FROM insurance_requirements WHERE project_id = ? AND coverage_type = ?'
-    ).get(params.id, coverage_type)
+    const existing = await convex.query(api.insuranceRequirements.getByProjectAndCoverageType, {
+      projectId: id as Id<"projects">,
+      coverageType: coverage_type as CoverageType,
+    })
 
     if (existing) {
       return NextResponse.json({
@@ -132,41 +142,35 @@ export async function POST(
     }
 
     // Create requirement
-    const requirementId = uuidv4()
-
-    db.prepare(`
-      INSERT INTO insurance_requirements (
-        id, project_id, coverage_type, minimum_limit, limit_type,
-        maximum_excess, principal_indemnity_required, cross_liability_required,
-        waiver_of_subrogation_required, principal_naming_required, other_requirements
-      )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      requirementId,
-      params.id,
-      coverage_type,
-      minimum_limit || null,
-      limit_type || 'per_occurrence',
-      maximum_excess || null,
-      principal_indemnity_required ? 1 : 0,
-      cross_liability_required ? 1 : 0,
-      waiver_of_subrogation_required ? 1 : 0,
-      principal_naming_required || null,
-      other_requirements || null
-    )
+    const requirementId = await convex.mutation(api.insuranceRequirements.create, {
+      projectId: id as Id<"projects">,
+      coverageType: coverage_type as CoverageType,
+      minimumLimit: minimum_limit || undefined,
+      limitType: limit_type || 'per_occurrence',
+      maximumExcess: maximum_excess || undefined,
+      principalIndemnityRequired: Boolean(principal_indemnity_required),
+      crossLiabilityRequired: Boolean(cross_liability_required),
+      waiverOfSubrogationRequired: Boolean(waiver_of_subrogation_required),
+      principalNamingRequired: principal_naming_required || undefined,
+      otherRequirements: other_requirements || undefined,
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'insurance_requirement', ?, 'create', ?)
-    `).run(uuidv4(), user.company_id, user.id, requirementId, JSON.stringify({
-      project_id: params.id,
-      coverage_type,
-      minimum_limit
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.companyId,
+      userId: user._id,
+      entityType: 'insurance_requirement',
+      entityId: requirementId,
+      action: 'create',
+      details: {
+        project_id: id,
+        coverage_type,
+        minimum_limit
+      },
+    })
 
     // Get created requirement
-    const requirement = db.prepare('SELECT * FROM insurance_requirements WHERE id = ?').get(requirementId)
+    const requirement = await convex.query(api.insuranceRequirements.getById, { id: requirementId })
 
     return NextResponse.json({
       success: true,
@@ -183,7 +187,7 @@ export async function POST(
 // PUT /api/projects/[id]/requirements - Update insurance requirements (bulk)
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const token = request.cookies.get('auth_token')?.value
@@ -192,9 +196,17 @@ export async function PUT(
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only admin and risk_manager can configure requirements
@@ -202,14 +214,17 @@ export async function PUT(
       return NextResponse.json({ error: 'Only admins and risk managers can configure requirements' }, { status: 403 })
     }
 
-    const db = getDb()
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as Project | undefined
+    const { id } = await params
 
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: id as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
@@ -229,43 +244,38 @@ export async function PUT(
       }
     }
 
-    // Delete existing requirements and insert new ones (transaction-like)
-    db.prepare('DELETE FROM insurance_requirements WHERE project_id = ?').run(params.id)
-
-    for (const req of requirements) {
-      const requirementId = uuidv4()
-      db.prepare(`
-        INSERT INTO insurance_requirements (
-          id, project_id, coverage_type, minimum_limit, limit_type,
-          maximum_excess, principal_indemnity_required, cross_liability_required,
-          waiver_of_subrogation_required, principal_naming_required, other_requirements
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        requirementId,
-        params.id,
-        req.coverage_type,
-        req.minimum_limit || null,
-        req.limit_type || 'per_occurrence',
-        req.maximum_excess || null,
-        req.principal_indemnity_required ? 1 : 0,
-        req.cross_liability_required ? 1 : 0,
-        req.waiver_of_subrogation_required ? 1 : 0,
-        req.principal_naming_required || null,
-        req.other_requirements || null
-      )
-    }
+    // Bulk replace requirements
+    await convex.mutation(api.insuranceRequirements.bulkReplace, {
+      projectId: id as Id<"projects">,
+      requirements: requirements.map((req: any) => ({
+        coverageType: req.coverage_type as CoverageType,
+        minimumLimit: req.minimum_limit || undefined,
+        limitType: req.limit_type || 'per_occurrence',
+        maximumExcess: req.maximum_excess || undefined,
+        principalIndemnityRequired: Boolean(req.principal_indemnity_required),
+        crossLiabilityRequired: Boolean(req.cross_liability_required),
+        waiverOfSubrogationRequired: Boolean(req.waiver_of_subrogation_required),
+        principalNamingRequired: req.principal_naming_required || undefined,
+        otherRequirements: req.other_requirements || undefined,
+      })),
+    })
 
     // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'project', ?, 'update_requirements', ?)
-    `).run(uuidv4(), user.company_id, user.id, params.id, JSON.stringify({
-      requirements_count: requirements.length
-    }))
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.companyId,
+      userId: user._id,
+      entityType: 'project',
+      entityId: id,
+      action: 'update_requirements',
+      details: {
+        requirements_count: requirements.length
+      },
+    })
 
     // Get updated requirements
-    const updatedRequirements = db.prepare('SELECT * FROM insurance_requirements WHERE project_id = ?').all(params.id)
+    const updatedRequirements = await convex.query(api.insuranceRequirements.getByProject, {
+      projectId: id as Id<"projects">,
+    })
 
     return NextResponse.json({
       success: true,

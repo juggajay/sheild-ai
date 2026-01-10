@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import { getDb } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
 import {
   getProcoreConfig,
   isProcoreDevMode,
   MOCK_PROCORE_COMPANIES,
 } from '@/lib/procore'
 
-interface OAuthConnection {
-  id: string
-  company_id: string
-  provider: string
-  access_token: string
-  refresh_token: string | null
-  pending_company_selection: number
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface SelectCompanyBody {
   procoreCompanyId: number
@@ -56,13 +50,11 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const db = getDb()
-
     // Get existing Procore connection
-    const connection = db.prepare(`
-      SELECT * FROM oauth_connections
-      WHERE company_id = ? AND provider = 'procore'
-    `).get(user.company_id) as OAuthConnection | undefined
+    const connection = await convex.query(api.integrations.getConnection, {
+      companyId: user.company_id as Id<"companies">,
+      provider: 'procore',
+    })
 
     if (!connection) {
       return NextResponse.json({
@@ -88,7 +80,7 @@ export async function POST(request: NextRequest) {
       // Verify with Procore API
       const response = await fetch(`${config.apiBaseUrl}/rest/v1.0/companies`, {
         headers: {
-          Authorization: `Bearer ${connection.access_token}`,
+          Authorization: `Bearer ${connection.accessToken}`,
         },
       })
 
@@ -111,29 +103,24 @@ export async function POST(request: NextRequest) {
     }
 
     // Update the connection with the selected company
-    db.prepare(`
-      UPDATE oauth_connections
-      SET
-        procore_company_id = ?,
-        procore_company_name = ?,
-        pending_company_selection = 0,
-        updated_at = datetime('now')
-      WHERE company_id = ? AND provider = 'procore'
-    `).run(procoreCompanyId, companyName, user.company_id)
+    await convex.mutation(api.integrations.updateProcoreCompany, {
+      companyId: user.company_id as Id<"companies">,
+      procoreCompanyId,
+      procoreCompanyName: companyName,
+    })
 
     // Create audit log entry
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'integration', 'procore', 'select_company', ?)
-    `).run(
-      uuidv4(),
-      user.company_id,
-      user.id,
-      JSON.stringify({
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'integration',
+      entityId: 'procore',
+      action: 'select_company',
+      details: {
         procore_company_id: procoreCompanyId,
         procore_company_name: companyName,
-      })
-    )
+      },
+    })
 
     console.log(`[Procore] Company "${companyName}" (ID: ${procoreCompanyId}) selected for Shield-AI company ${user.company_id}`)
 

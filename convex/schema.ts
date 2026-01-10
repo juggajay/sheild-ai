@@ -378,7 +378,8 @@ export default defineSchema({
   })
     .index("by_subcontractor", ["subcontractorId"])
     .index("by_project", ["projectId"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_verification", ["verificationId"]),
 
   // Exceptions - Compliance waivers
   exceptions: defineTable({

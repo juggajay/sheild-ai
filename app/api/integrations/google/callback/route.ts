@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
-import { getDb } from "@/lib/db"
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { v4 as uuidv4 } from "uuid"
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
@@ -11,7 +15,6 @@ const isDevMode = !GOOGLE_CLIENT_ID || GOOGLE_CLIENT_ID === 'test' || GOOGLE_CLI
 
 export async function GET(request: NextRequest) {
   try {
-    const db = getDb()
     const { searchParams } = new URL(request.url)
     const code = searchParams.get('code')
     const state = searchParams.get('state')
@@ -28,49 +31,34 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/dashboard/settings/integrations?error=invalid_callback', request.url))
     }
 
-    // Verify state token
-    const stateRecord = db.prepare(`
-      SELECT os.*, u.company_id
-      FROM oauth_states os
-      JOIN users u ON os.user_id = u.id
-      WHERE os.state = ? AND os.provider = 'google' AND os.expires_at > datetime('now')
-    `).get(state) as any
+    // Verify state token using Convex
+    const stateRecord = await convex.query(api.integrations.getOAuthState, { state })
 
     if (!stateRecord) {
       return NextResponse.redirect(new URL('/dashboard/settings/integrations?error=invalid_state', request.url))
     }
 
     // Delete used state
-    db.prepare('DELETE FROM oauth_states WHERE state = ?').run(state)
+    await convex.mutation(api.integrations.deleteOAuthState, { state })
 
     // Dev mode simulation
     if (isDevMode || isDev) {
       console.log("[DEV MODE] Google OAuth - Simulating successful connection")
-      console.log("[DEV MODE] Would exchange code for tokens and store credentials")
 
-      // Simulate storing OAuth tokens
-      const connectionId = uuidv4()
       const simulatedEmail = 'user@gmail.com'
+      const tokenExpiresAt = Date.now() + 3600 * 1000
 
       // Store simulated connection
-      db.prepare(`
-        INSERT INTO oauth_connections (id, company_id, provider, email, access_token, refresh_token, token_expires_at, created_at, updated_at)
-        VALUES (?, ?, 'google', ?, ?, ?, datetime('now', '+1 hour'), datetime('now'), datetime('now'))
-        ON CONFLICT(company_id, provider) DO UPDATE SET
-          email = excluded.email,
-          access_token = excluded.access_token,
-          refresh_token = excluded.refresh_token,
-          token_expires_at = excluded.token_expires_at,
-          updated_at = datetime('now')
-      `).run(
-        connectionId,
-        stateRecord.company_id,
-        simulatedEmail,
-        'dev_mode_access_token_' + uuidv4(),
-        'dev_mode_refresh_token_' + uuidv4()
-      )
+      await convex.mutation(api.integrations.upsertConnection, {
+        companyId: stateRecord.companyId as Id<"companies">,
+        provider: 'google',
+        email: simulatedEmail,
+        accessToken: 'dev_mode_access_token_' + uuidv4(),
+        refreshToken: 'dev_mode_refresh_token_' + uuidv4(),
+        tokenExpiresAt,
+      })
 
-      console.log(`[DEV MODE] Google Workspace connected for company ${stateRecord.company_id}`)
+      console.log(`[DEV MODE] Google Workspace connected for company ${stateRecord.companyId}`)
       console.log(`[DEV MODE] Simulated email: ${simulatedEmail}`)
 
       return NextResponse.redirect(new URL('/dashboard/settings/integrations?success=google_connected', request.url))
@@ -113,28 +101,19 @@ export async function GET(request: NextRequest) {
 
     const profile = await profileResponse.json()
     const email = profile.email
+    const tokenExpiresAt = Date.now() + (tokens.expires_in || 3600) * 1000
 
     // Store OAuth connection
-    const connectionId = uuidv4()
-    db.prepare(`
-      INSERT INTO oauth_connections (id, company_id, provider, email, access_token, refresh_token, token_expires_at, created_at, updated_at)
-      VALUES (?, ?, 'google', ?, ?, ?, datetime('now', '+' || ? || ' seconds'), datetime('now'), datetime('now'))
-      ON CONFLICT(company_id, provider) DO UPDATE SET
-        email = excluded.email,
-        access_token = excluded.access_token,
-        refresh_token = excluded.refresh_token,
-        token_expires_at = excluded.token_expires_at,
-        updated_at = datetime('now')
-    `).run(
-      connectionId,
-      stateRecord.company_id,
+    await convex.mutation(api.integrations.upsertConnection, {
+      companyId: stateRecord.companyId as Id<"companies">,
+      provider: 'google',
       email,
-      tokens.access_token,
-      tokens.refresh_token,
-      tokens.expires_in || 3600
-    )
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      tokenExpiresAt,
+    })
 
-    console.log(`Google Workspace connected for company ${stateRecord.company_id}, email: ${email}`)
+    console.log(`Google Workspace connected for company ${stateRecord.companyId}, email: ${email}`)
 
     return NextResponse.redirect(new URL('/dashboard/settings/integrations?success=google_connected', request.url))
   } catch (error) {

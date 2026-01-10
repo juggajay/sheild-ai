@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from "next/server"
-import { v4 as uuidv4 } from "uuid"
-import { getDb } from "@/lib/db"
+import { ConvexHttpClient } from "convex/browser"
+import { api } from "@/convex/_generated/api"
+import type { Id } from "@/convex/_generated/dataModel"
 import { getUserByToken } from "@/lib/auth"
 
-interface DbUser {
-  id: string
-  email: string
-  name: string
-  phone: string | null
-  avatar_url: string | null
-  company_id: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 // GET /api/user/profile - Get current user profile
 export async function GET(request: NextRequest) {
@@ -25,17 +19,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
-    const db = getDb()
-    const dbUser = db.prepare(`
-      SELECT id, email, name, phone, avatar_url, company_id
-      FROM users WHERE id = ?
-    `).get(user.id) as DbUser | undefined
+    const dbUser = await convex.query(api.users.getById, {
+      id: user.id as Id<"users">,
+    })
 
     if (!dbUser) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    return NextResponse.json({ profile: dbUser })
+    // Convert to legacy format
+    const profile = {
+      id: dbUser._id,
+      email: dbUser.email,
+      name: dbUser.name,
+      phone: dbUser.phone || null,
+      avatar_url: dbUser.avatarUrl || null,
+      company_id: dbUser.companyId,
+    }
+
+    return NextResponse.json({ profile })
   } catch (error) {
     console.error("Error fetching profile:", error)
     return NextResponse.json({ error: "Failed to fetch profile" }, { status: 500 })
@@ -55,7 +57,6 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
-    const db = getDb()
     const body = await request.json()
     const { name, phone, avatar_url } = body
 
@@ -72,36 +73,21 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    // Build update query dynamically
-    const updates: string[] = []
-    const values: (string | null)[] = []
+    // Build update object
+    const updates: any = {}
+    if (name !== undefined) updates.name = name.trim()
+    if (phone !== undefined) updates.phone = phone?.trim() || undefined
+    if (avatar_url !== undefined) updates.avatarUrl = avatar_url || undefined
 
-    if (name !== undefined) {
-      updates.push('name = ?')
-      values.push(name.trim())
-    }
-
-    if (phone !== undefined) {
-      updates.push('phone = ?')
-      values.push(phone?.trim() || null)
-    }
-
-    if (avatar_url !== undefined) {
-      updates.push('avatar_url = ?')
-      values.push(avatar_url || null)
-    }
-
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return NextResponse.json({ error: "No fields to update" }, { status: 400 })
     }
 
-    updates.push("updated_at = datetime('now')")
-    values.push(user.id)
-
-    db.prepare(`
-      UPDATE users SET ${updates.join(', ')}
-      WHERE id = ?
-    `).run(...values)
+    // Update user
+    await convex.mutation(api.users.update, {
+      id: user.id as Id<"users">,
+      ...updates,
+    })
 
     // Log the action
     const details: Record<string, unknown> = { self_update: true }
@@ -109,21 +95,35 @@ export async function PUT(request: NextRequest) {
     if (phone !== undefined) details.phone = phone
     if (avatar_url !== undefined) details.avatar_updated = true
 
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'user', ?, 'update', ?)
-    `).run(uuidv4(), user.company_id, user.id, user.id, JSON.stringify(details))
+    if (user.company_id) {
+      await convex.mutation(api.auditLogs.create, {
+        companyId: user.company_id as Id<"companies">,
+        userId: user.id as Id<"users">,
+        entityType: "user",
+        entityId: user.id,
+        action: "update",
+        details,
+      })
+    }
 
     // Get updated profile
-    const updatedProfile = db.prepare(`
-      SELECT id, email, name, phone, avatar_url, company_id
-      FROM users WHERE id = ?
-    `).get(user.id) as DbUser
+    const updatedUser = await convex.query(api.users.getById, {
+      id: user.id as Id<"users">,
+    })
+
+    const updatedProfile = {
+      id: updatedUser?._id,
+      email: updatedUser?.email,
+      name: updatedUser?.name,
+      phone: updatedUser?.phone || null,
+      avatar_url: updatedUser?.avatarUrl || null,
+      company_id: updatedUser?.companyId,
+    }
 
     return NextResponse.json({
       success: true,
       message: "Profile updated successfully",
-      profile: updatedProfile
+      profile: updatedProfile,
     })
   } catch (error) {
     console.error("Error updating profile:", error)

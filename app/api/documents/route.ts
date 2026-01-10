@@ -1,26 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb, type Project } from '@/lib/db'
-import { getUserByToken } from '@/lib/auth'
+import { getConvex, api } from '@/lib/convex'
+import type { Id } from '@/convex/_generated/dataModel'
 import { createNotificationForProjectTeam } from '@/lib/notifications'
 import { performSimulatedFraudAnalysis, type FraudAnalysisResult } from '@/lib/fraud-detection'
 import { uploadFile, getStorageInfo } from '@/lib/storage'
 import { extractDocumentData, convertToLegacyFormat, shouldSkipFraudDetection } from '@/lib/gemini'
 
 interface InsuranceRequirement {
-  id: string
-  coverage_type: string
-  minimum_limit: number | null
-  limit_type: string
-  maximum_excess: number | null
-  principal_indemnity_required: number
-  cross_liability_required: number
-  waiver_of_subrogation_required: number
-  principal_naming_required: 'principal_named' | 'interested_party' | null
+  coverageType: string
+  minimumLimit: number | null
+  limitType?: string | null
+  maximumExcess: number | null
+  principalIndemnityRequired: boolean
+  crossLiabilityRequired: boolean
+  waiverOfSubrogationRequired?: boolean
+  principalNamingRequired?: string | null
 }
 
 // List of APRA-licensed general insurers in Australia
-// This is a representative list - in production this would be fetched from APRA's register
 const APRA_LICENSED_INSURERS = [
   'QBE Insurance (Australia) Limited',
   'Allianz Australia Insurance Limited',
@@ -40,13 +37,6 @@ const APRA_LICENSED_INSURERS = [
   'AXA Corporate Solutions Assurance',
   'Swiss Re International SE',
   'Munich Holdings of Australasia Pty Limited'
-]
-
-// Unlicensed/offshore insurers for testing purposes
-const UNLICENSED_INSURERS = [
-  'Offshore Insurance Ltd',
-  'Unregistered Underwriters Co',
-  'Non-APRA Insurance Company'
 ]
 
 function formatCoverageType(type: string): string {
@@ -99,7 +89,7 @@ interface ExtractedData {
 function verifyAgainstRequirements(
   extractedData: ExtractedData,
   requirements: InsuranceRequirement[],
-  projectEndDate?: string | null,
+  projectEndDate?: number | null,
   projectState?: string | null,
   subcontractorAbn?: string | null
 ) {
@@ -160,32 +150,33 @@ function verifyAgainstRequirements(
   if (projectEndDate) {
     const projectEnd = new Date(projectEndDate)
     if (policyEnd < projectEnd) {
+      const projectEndDateStr = projectEnd.toISOString().split('T')[0]
       checks.push({
         check_type: 'project_coverage',
         description: 'Project period coverage',
         status: 'fail',
-        details: `Policy expires before project end date (${projectEndDate})`
+        details: `Policy expires before project end date (${projectEndDateStr})`
       })
       deficiencies.push({
         type: 'policy_expires_before_project',
         severity: 'critical',
         description: 'Policy expires before project completion date',
-        required_value: `Valid until ${projectEndDate}`,
+        required_value: `Valid until ${projectEndDateStr}`,
         actual_value: `Expires ${extractedData.period_of_insurance_end}`
       })
     } else {
+      const projectEndDateStr = projectEnd.toISOString().split('T')[0]
       checks.push({
         check_type: 'project_coverage',
         description: 'Project period coverage',
         status: 'pass',
-        details: `Policy covers project period (ends ${projectEndDate})`
+        details: `Policy covers project period (ends ${projectEndDateStr})`
       })
     }
   }
 
   // Check ABN matches
   if (subcontractorAbn) {
-    // Normalize ABNs for comparison (remove spaces)
     const extractedAbn = extractedData.insured_party_abn?.replace(/\s/g, '') || ''
     const expectedAbn = subcontractorAbn.replace(/\s/g, '')
 
@@ -251,176 +242,102 @@ function verifyAgainstRequirements(
 
   // Check each coverage type against requirements
   for (const requirement of requirements) {
-    const coverage = extractedData.coverages.find(c => c.type === requirement.coverage_type)
+    const coverage = extractedData.coverages.find(c => c.type === requirement.coverageType)
 
     if (!coverage) {
       checks.push({
-        check_type: `coverage_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} coverage`,
+        check_type: `coverage_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} coverage`,
         status: 'fail',
         details: 'Coverage not found in certificate'
       })
       deficiencies.push({
         type: 'missing_coverage',
         severity: 'critical',
-        description: `${formatCoverageType(requirement.coverage_type)} coverage is required but not present`,
-        required_value: requirement.minimum_limit ? `$${requirement.minimum_limit.toLocaleString()}` : 'Required',
+        description: `${formatCoverageType(requirement.coverageType)} coverage is required but not present`,
+        required_value: requirement.minimumLimit ? `$${requirement.minimumLimit.toLocaleString()}` : 'Required',
         actual_value: 'Not found'
       })
       continue
     }
 
     // Check minimum limit
-    if (requirement.minimum_limit && coverage.limit < requirement.minimum_limit) {
+    if (requirement.minimumLimit && coverage.limit < requirement.minimumLimit) {
       checks.push({
-        check_type: `coverage_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} limit`,
+        check_type: `coverage_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} limit`,
         status: 'fail',
-        details: `Limit $${coverage.limit.toLocaleString()} is below required $${requirement.minimum_limit.toLocaleString()}`
+        details: `Limit $${coverage.limit.toLocaleString()} is below required $${requirement.minimumLimit.toLocaleString()}`
       })
       deficiencies.push({
         type: 'insufficient_limit',
         severity: 'major',
-        description: `${formatCoverageType(requirement.coverage_type)} limit is below minimum requirement`,
-        required_value: `$${requirement.minimum_limit.toLocaleString()}`,
+        description: `${formatCoverageType(requirement.coverageType)} limit is below minimum requirement`,
+        required_value: `$${requirement.minimumLimit.toLocaleString()}`,
         actual_value: `$${coverage.limit.toLocaleString()}`
       })
     } else {
       checks.push({
-        check_type: `coverage_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} limit`,
+        check_type: `coverage_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} limit`,
         status: 'pass',
         details: `Limit $${coverage.limit.toLocaleString()} meets minimum requirement`
       })
     }
 
     // Check maximum excess
-    if (requirement.maximum_excess && coverage.excess > requirement.maximum_excess) {
+    if (requirement.maximumExcess && coverage.excess > requirement.maximumExcess) {
       checks.push({
-        check_type: `excess_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} excess`,
+        check_type: `excess_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} excess`,
         status: 'fail',
-        details: `Excess $${coverage.excess.toLocaleString()} exceeds maximum $${requirement.maximum_excess.toLocaleString()}`
+        details: `Excess $${coverage.excess.toLocaleString()} exceeds maximum $${requirement.maximumExcess.toLocaleString()}`
       })
       deficiencies.push({
         type: 'excess_too_high',
         severity: 'minor',
-        description: `${formatCoverageType(requirement.coverage_type)} excess exceeds maximum allowed`,
-        required_value: `Max $${requirement.maximum_excess.toLocaleString()}`,
+        description: `${formatCoverageType(requirement.coverageType)} excess exceeds maximum allowed`,
+        required_value: `Max $${requirement.maximumExcess.toLocaleString()}`,
         actual_value: `$${coverage.excess.toLocaleString()}`
       })
     }
 
     // Check principal indemnity
-    if (requirement.principal_indemnity_required && 'principal_indemnity' in coverage && !coverage.principal_indemnity) {
+    if (requirement.principalIndemnityRequired && 'principal_indemnity' in coverage && !coverage.principal_indemnity) {
       checks.push({
-        check_type: `principal_indemnity_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} principal indemnity`,
+        check_type: `principal_indemnity_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} principal indemnity`,
         status: 'fail',
         details: 'Principal indemnity extension required but not present'
       })
       deficiencies.push({
         type: 'missing_endorsement',
         severity: 'major',
-        description: `Principal indemnity extension required for ${formatCoverageType(requirement.coverage_type)}`,
+        description: `Principal indemnity extension required for ${formatCoverageType(requirement.coverageType)}`,
         required_value: 'Yes',
         actual_value: 'No'
       })
     }
 
     // Check cross liability
-    if (requirement.cross_liability_required && 'cross_liability' in coverage && !coverage.cross_liability) {
+    if (requirement.crossLiabilityRequired && 'cross_liability' in coverage && !coverage.cross_liability) {
       checks.push({
-        check_type: `cross_liability_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} cross liability`,
+        check_type: `cross_liability_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} cross liability`,
         status: 'fail',
         details: 'Cross liability extension required but not present'
       })
       deficiencies.push({
         type: 'missing_endorsement',
         severity: 'major',
-        description: `Cross liability extension required for ${formatCoverageType(requirement.coverage_type)}`,
+        description: `Cross liability extension required for ${formatCoverageType(requirement.coverageType)}`,
         required_value: 'Yes',
         actual_value: 'No'
       })
     }
 
-    // Check waiver of subrogation
-    if (requirement.waiver_of_subrogation_required && 'waiver_of_subrogation' in coverage) {
-      const hasWaiver = (coverage as { waiver_of_subrogation?: boolean }).waiver_of_subrogation
-      if (!hasWaiver) {
-        checks.push({
-          check_type: `waiver_of_subrogation_${requirement.coverage_type}`,
-          description: `${formatCoverageType(requirement.coverage_type)} waiver of subrogation`,
-          status: 'fail',
-          details: 'Waiver of subrogation required but not present'
-        })
-        deficiencies.push({
-          type: 'missing_endorsement',
-          severity: 'major',
-          description: `Waiver of subrogation required for ${formatCoverageType(requirement.coverage_type)}`,
-          required_value: 'Yes',
-          actual_value: 'No'
-        })
-      } else {
-        checks.push({
-          check_type: `waiver_of_subrogation_${requirement.coverage_type}`,
-          description: `${formatCoverageType(requirement.coverage_type)} waiver of subrogation`,
-          status: 'pass',
-          details: 'Waiver of subrogation clause detected and verified'
-        })
-      }
-    }
-
-    // Check principal naming requirement (principal_named vs interested_party)
-    if (requirement.principal_naming_required && 'principal_naming_type' in coverage) {
-      const actualNamingType = (coverage as { principal_naming_type?: string | null }).principal_naming_type
-      const requiredNamingType = requirement.principal_naming_required
-
-      if (!actualNamingType) {
-        // No principal naming found at all
-        checks.push({
-          check_type: `principal_naming_${requirement.coverage_type}`,
-          description: `${formatCoverageType(requirement.coverage_type)} principal naming`,
-          status: 'fail',
-          details: `${requiredNamingType === 'principal_named' ? 'Principal naming' : 'Interested party notation'} required but not found`
-        })
-        deficiencies.push({
-          type: 'missing_principal_naming',
-          severity: requiredNamingType === 'principal_named' ? 'critical' : 'major',
-          description: `${requiredNamingType === 'principal_named' ? 'Principal naming' : 'Interested party notation'} required for ${formatCoverageType(requirement.coverage_type)}`,
-          required_value: requiredNamingType === 'principal_named' ? 'Principal Named' : 'Interested Party',
-          actual_value: 'Not found'
-        })
-      } else if (requiredNamingType === 'principal_named' && actualNamingType === 'interested_party') {
-        // Required principal naming but only have interested party (weaker protection)
-        checks.push({
-          check_type: `principal_naming_${requirement.coverage_type}`,
-          description: `${formatCoverageType(requirement.coverage_type)} principal naming`,
-          status: 'fail',
-          details: 'Principal naming required but only Interested Party notation found (weaker protection)'
-        })
-        deficiencies.push({
-          type: 'insufficient_principal_naming',
-          severity: 'major',
-          description: `Principal naming required but only Interested Party notation found for ${formatCoverageType(requirement.coverage_type)}. Interested Party provides notification rights only, not full principal protection.`,
-          required_value: 'Principal Named',
-          actual_value: 'Interested Party Only'
-        })
-      } else {
-        // Either exact match or interested_party required and we have principal_named (even better)
-        const namingLabel = actualNamingType === 'principal_named' ? 'Principal Named' : 'Interested Party'
-        checks.push({
-          check_type: `principal_naming_${requirement.coverage_type}`,
-          description: `${formatCoverageType(requirement.coverage_type)} principal naming`,
-          status: 'pass',
-          details: `${namingLabel} - principal party identification verified`
-        })
-      }
-    }
-
     // Check Workers Comp state matches project state
-    if (requirement.coverage_type === 'workers_comp' && projectState && 'state' in coverage) {
+    if (requirement.coverageType === 'workers_comp' && projectState && 'state' in coverage) {
       const wcState = (coverage as { state?: string }).state
       if (wcState && wcState !== projectState) {
         checks.push({
@@ -452,13 +369,12 @@ function verifyAgainstRequirements(
   const hasWarnings = checks.some(c => c.status === 'warning')
   const hasCriticalDeficiencies = deficiencies.some(d => d.severity === 'critical')
   const confidenceScore = extractedData.extraction_confidence
-  const LOW_CONFIDENCE_THRESHOLD = 0.70 // Below 70% confidence requires manual review
+  const LOW_CONFIDENCE_THRESHOLD = 0.70
 
   let overallStatus: 'pass' | 'fail' | 'review' = 'pass'
   if (hasFailures || hasCriticalDeficiencies) {
     overallStatus = 'fail'
   } else if (hasWarnings || confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
-    // Low confidence extractions need manual review even if all checks pass
     overallStatus = 'review'
     if (confidenceScore < LOW_CONFIDENCE_THRESHOLD) {
       checks.push({
@@ -478,26 +394,6 @@ function verifyAgainstRequirements(
   }
 }
 
-// Helper function to check if user has access to project
-function canAccessProject(user: { id: string; company_id: string | null; role: string }, project: Project): boolean {
-  // Must be same company
-  if (project.company_id !== user.company_id) {
-    return false
-  }
-
-  // Admin, risk_manager, and read_only can access all company projects
-  if (['admin', 'risk_manager', 'read_only'].includes(user.role)) {
-    return true
-  }
-
-  // Project manager and project administrator can only access assigned projects
-  if (['project_manager', 'project_administrator'].includes(user.role)) {
-    return project.project_manager_id === user.id
-  }
-
-  return false
-}
-
 // GET /api/documents - List documents
 export async function GET(request: NextRequest) {
   try {
@@ -507,51 +403,31 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     const { searchParams } = new URL(request.url)
     const projectId = searchParams.get('projectId')
     const subcontractorId = searchParams.get('subcontractorId')
 
-    const db = getDb()
-
-    let query = `
-      SELECT
-        d.*,
-        s.name as subcontractor_name,
-        s.abn as subcontractor_abn,
-        p.name as project_name,
-        v.status as verification_status,
-        v.confidence_score
-      FROM coc_documents d
-      JOIN subcontractors s ON d.subcontractor_id = s.id
-      JOIN projects p ON d.project_id = p.id
-      LEFT JOIN verifications v ON v.coc_document_id = d.id
-      WHERE p.company_id = ?
-    `
-    const params: (string | null)[] = [user.company_id]
-
-    if (projectId) {
-      query += ' AND d.project_id = ?'
-      params.push(projectId)
-    }
-
-    if (subcontractorId) {
-      query += ' AND d.subcontractor_id = ?'
-      params.push(subcontractorId)
-    }
-
-    query += ' ORDER BY d.created_at DESC'
-
-    const documents = db.prepare(query).all(...params)
-
-    return NextResponse.json({
-      documents,
-      total: documents.length
+    // Get documents using Convex
+    const result = await convex.query(api.documents.listByCompany, {
+      companyId: user.companyId,
+      projectId: projectId ? projectId as Id<"projects"> : undefined,
+      subcontractorId: subcontractorId ? subcontractorId as Id<"subcontractors"> : undefined,
     })
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Get documents error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -567,9 +443,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Get user session
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
+    }
+
+    const user = sessionData.user
+    if (!user.companyId) {
+      return NextResponse.json({ error: 'User has no company' }, { status: 400 })
     }
 
     // Only certain roles can upload documents
@@ -609,33 +493,43 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const db = getDb()
+    // Validate access to project
+    const accessResult = await convex.query(api.projects.validateAccess, {
+      projectId: projectId as Id<"projects">,
+      userId: user._id,
+      userRole: user.role,
+      userCompanyId: user.companyId,
+    })
 
-    // Verify project exists and user has access
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project | undefined
-    if (!project) {
-      return NextResponse.json({ error: 'Project not found' }, { status: 404 })
-    }
-
-    if (!canAccessProject(user, project)) {
+    if (!accessResult.canAccess || !accessResult.project) {
       return NextResponse.json({ error: 'Access denied to this project' }, { status: 403 })
     }
 
+    const project = accessResult.project
+
     // Verify subcontractor exists and belongs to same company
-    const subcontractor = db.prepare('SELECT * FROM subcontractors WHERE id = ? AND company_id = ?')
-      .get(subcontractorId, user.company_id)
-    if (!subcontractor) {
+    const subResult = await convex.query(api.projectSubcontractors.validateSubcontractor, {
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+      companyId: user.companyId,
+    })
+
+    if (!subResult.valid || !subResult.subcontractor) {
       return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
     }
 
+    const subcontractor = subResult.subcontractor
+
     // Verify subcontractor is assigned to the project
-    const assignment = db.prepare('SELECT id FROM project_subcontractors WHERE project_id = ? AND subcontractor_id = ?')
-      .get(projectId, subcontractorId)
+    const assignment = await convex.query(api.projectSubcontractors.getByProjectAndSubcontractor, {
+      projectId: projectId as Id<"projects">,
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+    })
+
     if (!assignment) {
       return NextResponse.json({ error: 'Subcontractor is not assigned to this project' }, { status: 400 })
     }
 
-    // Upload file using storage library (supports Supabase or local storage)
+    // Upload file using storage library
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
@@ -655,35 +549,47 @@ export async function POST(request: NextRequest) {
     console.log(`[DOCUMENTS] File uploaded via ${storageInfo.provider}: ${fileUrl}`)
 
     // Create document record
-    const documentId = uuidv4()
-    db.prepare(`
-      INSERT INTO coc_documents (id, subcontractor_id, project_id, file_url, file_name, file_size, source, received_at, processing_status)
-      VALUES (?, ?, ?, ?, ?, ?, 'upload', datetime('now'), 'pending')
-    `).run(documentId, subcontractorId, projectId, fileUrl, file.name, file.size)
-
-    // Create initial verification record
-    const verificationId = uuidv4()
-    db.prepare(`
-      INSERT INTO verifications (id, coc_document_id, project_id, status, extracted_data, checks, deficiencies)
-      VALUES (?, ?, ?, 'review', '{}', '[]', '[]')
-    `).run(verificationId, documentId, projectId)
-
-    // Log the action
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'coc_document', ?, 'upload', ?)
-    `).run(uuidv4(), user.company_id, user.id, documentId, JSON.stringify({
+    const documentId = await convex.mutation(api.documents.create, {
+      subcontractorId: subcontractorId as Id<"subcontractors">,
+      projectId: projectId as Id<"projects">,
+      fileUrl,
       fileName: file.name,
       fileSize: file.size,
-      projectId,
-      subcontractorId
-    }))
+      source: 'upload',
+      receivedAt: Date.now(),
+    })
+
+    // Create initial verification record
+    await convex.mutation(api.verifications.create, {
+      cocDocumentId: documentId,
+      projectId: projectId as Id<"projects">,
+      status: 'review',
+      extractedData: {},
+      checks: [],
+      deficiencies: [],
+    })
+
+    // Log the upload action
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.companyId,
+      userId: user._id,
+      entityType: 'coc_document',
+      entityId: documentId,
+      action: 'upload',
+      details: {
+        fileName: file.name,
+        fileSize: file.size,
+        projectId,
+        subcontractorId
+      },
+    })
 
     // Update document processing status to 'processing'
-    db.prepare(`
-      UPDATE coc_documents SET processing_status = 'processing', processed_at = datetime('now')
-      WHERE id = ?
-    `).run(documentId)
+    await convex.mutation(api.documents.updateProcessingStatus, {
+      id: documentId,
+      processingStatus: 'processing',
+      processedAt: Date.now(),
+    })
 
     // Get URL search params for test toggles
     const { searchParams } = new URL(request.url)
@@ -694,31 +600,34 @@ export async function POST(request: NextRequest) {
     // Handle extraction failure
     if (!extractionResult.success || !extractionResult.data) {
       // Update document status to extraction_failed
-      db.prepare(`
-        UPDATE coc_documents SET processing_status = 'extraction_failed', updated_at = datetime('now')
-        WHERE id = ?
-      `).run(documentId)
+      await convex.mutation(api.documents.updateProcessingStatus, {
+        id: documentId,
+        processingStatus: 'failed',
+      })
 
       // Update verification record with failure
-      db.prepare(`
-        UPDATE verifications
-        SET status = 'fail', extracted_data = ?, updated_at = datetime('now')
-        WHERE coc_document_id = ?
-      `).run(
-        JSON.stringify({ extraction_error: extractionResult.error }),
-        documentId
-      )
+      await convex.mutation(api.verifications.upsert, {
+        cocDocumentId: documentId,
+        projectId: projectId as Id<"projects">,
+        status: 'fail',
+        extractedData: { extraction_error: extractionResult.error },
+        checks: [],
+        deficiencies: [],
+      })
 
       // Log the extraction failure
-      db.prepare(`
-        INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-        VALUES (?, ?, ?, 'coc_document', ?, 'extraction_failed', ?)
-      `).run(uuidv4(), user.company_id, user.id, documentId, JSON.stringify({
-        error: extractionResult.error,
-        fileName: file.name
-      }))
+      await convex.mutation(api.auditLogs.create, {
+        companyId: user.companyId,
+        userId: user._id,
+        entityType: 'coc_document',
+        entityId: documentId,
+        action: 'extraction_failed',
+        details: {
+          error: extractionResult.error,
+          fileName: file.name
+        },
+      })
 
-      // Return error response with retry options for subcontractor
       return NextResponse.json({
         success: false,
         status: 'extraction_failed',
@@ -739,25 +648,40 @@ export async function POST(request: NextRequest) {
     // Convert Gemini extraction to legacy format for verification
     const extractedData = convertToLegacyFormat(
       extractionResult.data,
-      subcontractor as { name: string; abn: string }
+      { name: subcontractor.name, abn: subcontractor.abn }
     )
     extractedData.extraction_confidence = extractionResult.confidence
 
-    const requirements = db.prepare(`
-      SELECT * FROM insurance_requirements WHERE project_id = ?
-    `).all(projectId) as InsuranceRequirement[]
+    // Get insurance requirements
+    const requirementsRaw = await convex.query(api.insuranceRequirements.getByProject, {
+      projectId: projectId as Id<"projects">,
+    })
 
-    // Get project end date and state for coverage checks
-    const projectEndDate = project.end_date
-    const projectState = project.state
+    // Map requirements to expected format (convert undefined to null)
+    const requirements: InsuranceRequirement[] = requirementsRaw.map(r => ({
+      coverageType: r.coverageType,
+      minimumLimit: r.minimumLimit ?? null,
+      limitType: r.limitType ?? null,
+      maximumExcess: r.maximumExcess ?? null,
+      principalIndemnityRequired: r.principalIndemnityRequired,
+      crossLiabilityRequired: r.crossLiabilityRequired,
+      waiverOfSubrogationRequired: r.waiverOfSubrogationRequired,
+      principalNamingRequired: r.principalNamingRequired ?? null,
+    }))
 
-    const subcontractorAbn = (subcontractor as { abn: string }).abn
-    const verification = verifyAgainstRequirements(extractedData as unknown as ExtractedData, requirements, projectEndDate, projectState, subcontractorAbn)
+    // Verify against requirements
+    const verification = verifyAgainstRequirements(
+      extractedData as unknown as ExtractedData,
+      requirements,
+      project.endDate,
+      project.state,
+      subcontractor.abn
+    )
 
     // Check if fraud detection should be skipped (for testing)
     const skipFraud = shouldSkipFraudDetection(file.name, searchParams)
 
-    // Perform fraud detection analysis (unless skipped for testing)
+    // Perform fraud detection analysis
     const fraudAnalysis: FraudAnalysisResult = skipFraud
       ? {
           overall_risk_score: 0,
@@ -786,7 +710,6 @@ export async function POST(request: NextRequest) {
     let finalStatus = verification.status
     if (fraudAnalysis.is_blocked) {
       finalStatus = 'fail'
-      // Add fraud-related deficiencies
       verification.deficiencies.push({
         type: 'fraud_detected',
         severity: 'critical',
@@ -794,7 +717,6 @@ export async function POST(request: NextRequest) {
         required_value: 'Authentic document',
         actual_value: `Risk level: ${fraudAnalysis.risk_level} (score: ${fraudAnalysis.overall_risk_score})`
       })
-      // Add fraud checks to verification checks
       for (const check of fraudAnalysis.checks.filter(c => c.status === 'fail')) {
         verification.checks.push({
           check_type: check.check_type,
@@ -805,7 +727,6 @@ export async function POST(request: NextRequest) {
       }
     } else if (fraudAnalysis.risk_level === 'high' && finalStatus === 'pass') {
       finalStatus = 'review'
-      // Add warning for high-risk but not blocked
       verification.checks.push({
         check_type: 'fraud_risk_warning',
         description: 'Fraud Risk Assessment',
@@ -815,20 +736,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Update verification record with extracted data and fraud analysis
-    db.prepare(`
-      UPDATE verifications
-      SET
-        status = ?,
-        confidence_score = ?,
-        extracted_data = ?,
-        checks = ?,
-        deficiencies = ?,
-        updated_at = datetime('now')
-      WHERE coc_document_id = ?
-    `).run(
-      finalStatus,
-      verification.confidence_score,
-      JSON.stringify({
+    await convex.mutation(api.verifications.upsert, {
+      cocDocumentId: documentId,
+      projectId: projectId as Id<"projects">,
+      status: finalStatus as 'pass' | 'fail' | 'review',
+      confidenceScore: verification.confidence_score,
+      extractedData: {
         ...extractedData,
         fraud_analysis: {
           risk_score: fraudAnalysis.overall_risk_score,
@@ -838,49 +751,50 @@ export async function POST(request: NextRequest) {
           checks: fraudAnalysis.checks,
           evidence_summary: fraudAnalysis.evidence_summary
         }
-      }),
-      JSON.stringify(verification.checks),
-      JSON.stringify(verification.deficiencies),
-      documentId
-    )
+      },
+      checks: verification.checks,
+      deficiencies: verification.deficiencies,
+    })
 
     // Update document processing status to completed
-    db.prepare(`
-      UPDATE coc_documents SET processing_status = 'completed', updated_at = datetime('now')
-      WHERE id = ?
-    `).run(documentId)
+    await convex.mutation(api.documents.updateProcessingStatus, {
+      id: documentId,
+      processingStatus: 'completed',
+    })
 
     // Get names for notifications
-    const subcontractorName = (subcontractor as { name: string }).name
+    const subcontractorName = subcontractor.name
     const projectName = project.name
 
-    // Auto-approve: If verification passes, automatically update subcontractor compliance status to 'compliant'
+    // Update compliance status based on verification result
     if (finalStatus === 'pass') {
-      db.prepare(`
-        UPDATE project_subcontractors
-        SET status = 'compliant', updated_at = datetime('now')
-        WHERE project_id = ? AND subcontractor_id = ?
-      `).run(projectId, subcontractorId)
+      await convex.mutation(api.projectSubcontractors.updateStatusByProjectAndSubcontractor, {
+        projectId: projectId as Id<"projects">,
+        subcontractorId: subcontractorId as Id<"subcontractors">,
+        status: 'compliant',
+      })
 
       // Log the auto-approval
-      db.prepare(`
-        INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-        VALUES (?, ?, ?, 'project_subcontractor', ?, 'auto_approve', ?)
-      `).run(uuidv4(), user.company_id, user.id, `${projectId}_${subcontractorId}`, JSON.stringify({
-        documentId,
-        verificationStatus: 'pass',
-        autoApproved: true,
-        message: 'Subcontractor automatically marked compliant after verification passed'
-      }))
+      await convex.mutation(api.auditLogs.create, {
+        companyId: user.companyId,
+        userId: user._id,
+        entityType: 'project_subcontractor',
+        entityId: `${projectId}_${subcontractorId}`,
+        action: 'auto_approve',
+        details: {
+          documentId,
+          verificationStatus: 'pass',
+          autoApproved: true,
+          message: 'Subcontractor automatically marked compliant after verification passed'
+        },
+      })
     } else if (finalStatus === 'fail') {
-      // If verification fails (including fraud detection), mark subcontractor as non-compliant
-      db.prepare(`
-        UPDATE project_subcontractors
-        SET status = 'non_compliant', updated_at = datetime('now')
-        WHERE project_id = ? AND subcontractor_id = ?
-      `).run(projectId, subcontractorId)
+      await convex.mutation(api.projectSubcontractors.updateStatusByProjectAndSubcontractor, {
+        projectId: projectId as Id<"projects">,
+        subcontractorId: subcontractorId as Id<"subcontractors">,
+        status: 'non_compliant',
+      })
 
-      // If fraud was detected, create a special notification
       if (fraudAnalysis.is_blocked) {
         createNotificationForProjectTeam(
           projectId,
@@ -894,7 +808,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create notifications for project team (skip if fraud notification already sent)
+    // Create notifications for project team
     if (finalStatus === 'pass') {
       createNotificationForProjectTeam(
         projectId,
@@ -906,7 +820,6 @@ export async function POST(request: NextRequest) {
         documentId
       )
     } else if (finalStatus === 'fail' && !fraudAnalysis.is_blocked) {
-      // Only send regular failure notification if not already sent as fraud alert
       const deficiencyCount = verification.deficiencies.length
       createNotificationForProjectTeam(
         projectId,
@@ -918,7 +831,6 @@ export async function POST(request: NextRequest) {
         documentId
       )
     } else if (finalStatus === 'review') {
-      // Review required
       createNotificationForProjectTeam(
         projectId,
         'coc_received',

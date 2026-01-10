@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { headers } from 'next/headers'
-import { getDb } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { constructWebhookEvent, isStripeConfigured } from '@/lib/stripe'
 import Stripe from 'stripe'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 /**
  * POST /api/webhooks/stripe
@@ -79,11 +82,6 @@ export async function POST(request: NextRequest) {
  * Process a Stripe event and update the database accordingly
  */
 async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
-  const db = getDb()
-
-  // Log the event
-  const eventLogId = uuidv4()
-
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session
@@ -92,25 +90,27 @@ async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
 
       if (companyId && tier) {
         // Update company subscription status
-        db.prepare(`
-          UPDATE companies SET
-            subscription_tier = ?,
-            subscription_status = 'active',
-            stripe_subscription_id = ?,
-            updated_at = datetime('now')
-          WHERE id = ?
-        `).run(tier, session.subscription, companyId)
+        await convex.mutation(api.companies.updateSubscriptionFromWebhook, {
+          id: companyId as Id<"companies">,
+          subscriptionTier: tier,
+          subscriptionStatus: 'active',
+          stripeSubscriptionId: session.subscription as string,
+        })
 
         // Log billing event
-        db.prepare(`
-          INSERT INTO billing_events (id, company_id, stripe_event_id, event_type, details)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(eventLogId, companyId, event.id, 'checkout_completed', JSON.stringify({
-          tier,
-          subscription_id: session.subscription,
-          customer_id: session.customer,
-          test_mode: isTestMode,
-        }))
+        await convex.mutation(api.auditLogs.create, {
+          companyId: companyId as Id<"companies">,
+          entityType: 'billing',
+          entityId: companyId,
+          action: 'checkout_completed',
+          details: {
+            tier,
+            subscription_id: session.subscription,
+            customer_id: session.customer,
+            stripe_event_id: event.id,
+            test_mode: isTestMode,
+          },
+        })
 
         console.log(`[Stripe] Checkout completed for company ${companyId}, tier: ${tier}`)
       }
@@ -125,38 +125,33 @@ async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
       if (companyId) {
         const status = subscription.status === 'trialing' ? 'trialing' : 'active'
 
-        // Access period end safely - it may be on the subscription object
+        // Access period end safely
         const periodEnd = (subscription as { current_period_end?: number }).current_period_end
 
-        db.prepare(`
-          UPDATE companies SET
-            subscription_tier = ?,
-            subscription_status = ?,
-            stripe_subscription_id = ?,
-            subscription_period_end = ?,
-            trial_ends_at = ?,
-            updated_at = datetime('now')
-          WHERE id = ?
-        `).run(
-          tier || 'professional',
-          status,
-          subscription.id,
-          periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
-          subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
-          companyId
-        )
+        await convex.mutation(api.companies.updateSubscriptionFromWebhook, {
+          id: companyId as Id<"companies">,
+          subscriptionTier: tier || 'professional',
+          subscriptionStatus: status,
+          stripeSubscriptionId: subscription.id,
+          subscriptionPeriodEnd: periodEnd ? periodEnd * 1000 : undefined,
+          trialEndsAt: subscription.trial_end ? subscription.trial_end * 1000 : undefined,
+        })
 
         // Log billing event
-        db.prepare(`
-          INSERT INTO billing_events (id, company_id, stripe_event_id, event_type, details)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(eventLogId, companyId, event.id, 'subscription_created', JSON.stringify({
-          tier,
-          status,
-          subscription_id: subscription.id,
-          trial_end: subscription.trial_end,
-          test_mode: isTestMode,
-        }))
+        await convex.mutation(api.auditLogs.create, {
+          companyId: companyId as Id<"companies">,
+          entityType: 'billing',
+          entityId: companyId,
+          action: 'subscription_created',
+          details: {
+            tier,
+            status,
+            subscription_id: subscription.id,
+            trial_end: subscription.trial_end,
+            stripe_event_id: event.id,
+            test_mode: isTestMode,
+          },
+        })
 
         console.log(`[Stripe] Subscription created for company ${companyId}`)
       }
@@ -199,31 +194,27 @@ async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
         // Access period end safely
         const periodEnd = (subscription as { current_period_end?: number }).current_period_end
 
-        db.prepare(`
-          UPDATE companies SET
-            subscription_tier = COALESCE(?, subscription_tier),
-            subscription_status = ?,
-            subscription_period_end = ?,
-            trial_ends_at = ?,
-            updated_at = datetime('now')
-          WHERE id = ?
-        `).run(
-          tier,
-          status,
-          periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
-          subscription.trial_end ? new Date(subscription.trial_end * 1000).toISOString() : null,
-          companyId
-        )
+        await convex.mutation(api.companies.updateSubscriptionFromWebhook, {
+          id: companyId as Id<"companies">,
+          subscriptionTier: tier,
+          subscriptionStatus: status,
+          subscriptionPeriodEnd: periodEnd ? periodEnd * 1000 : undefined,
+          trialEndsAt: subscription.trial_end ? subscription.trial_end * 1000 : undefined,
+        })
 
         // Log billing event
-        db.prepare(`
-          INSERT INTO billing_events (id, company_id, stripe_event_id, event_type, details)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(eventLogId, companyId, event.id, 'subscription_updated', JSON.stringify({
-          status,
-          cancel_at_period_end: subscription.cancel_at_period_end,
-          test_mode: isTestMode,
-        }))
+        await convex.mutation(api.auditLogs.create, {
+          companyId: companyId as Id<"companies">,
+          entityType: 'billing',
+          entityId: companyId,
+          action: 'subscription_updated',
+          details: {
+            status,
+            cancel_at_period_end: subscription.cancel_at_period_end,
+            stripe_event_id: event.id,
+            test_mode: isTestMode,
+          },
+        })
 
         console.log(`[Stripe] Subscription updated for company ${companyId}, status: ${status}`)
       }
@@ -236,24 +227,25 @@ async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
 
       if (companyId) {
         // Downgrade to trial/free
-        db.prepare(`
-          UPDATE companies SET
-            subscription_tier = 'trial',
-            subscription_status = 'canceled',
-            stripe_subscription_id = NULL,
-            subscription_period_end = NULL,
-            updated_at = datetime('now')
-          WHERE id = ?
-        `).run(companyId)
+        await convex.mutation(api.companies.updateSubscriptionFromWebhook, {
+          id: companyId as Id<"companies">,
+          subscriptionTier: 'trial',
+          subscriptionStatus: 'canceled',
+          clearSubscription: true,
+        })
 
         // Log billing event
-        db.prepare(`
-          INSERT INTO billing_events (id, company_id, stripe_event_id, event_type, details)
-          VALUES (?, ?, ?, ?, ?)
-        `).run(eventLogId, companyId, event.id, 'subscription_deleted', JSON.stringify({
-          subscription_id: subscription.id,
-          test_mode: isTestMode,
-        }))
+        await convex.mutation(api.auditLogs.create, {
+          companyId: companyId as Id<"companies">,
+          entityType: 'billing',
+          entityId: companyId,
+          action: 'subscription_deleted',
+          details: {
+            subscription_id: subscription.id,
+            stripe_event_id: event.id,
+            test_mode: isTestMode,
+          },
+        })
 
         console.log(`[Stripe] Subscription canceled for company ${companyId}`)
       }
@@ -266,31 +258,35 @@ async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
 
       if (customerId) {
         // Find company by Stripe customer ID
-        const company = db.prepare(`
-          SELECT id FROM companies WHERE stripe_customer_id = ?
-        `).get(customerId) as { id: string } | undefined
+        const company = await convex.query(api.companies.getByStripeCustomerId, {
+          stripeCustomerId: customerId,
+        })
 
         if (company) {
-          // Ensure subscription is active
-          db.prepare(`
-            UPDATE companies SET
-              subscription_status = 'active',
-              updated_at = datetime('now')
-            WHERE id = ? AND subscription_status IN ('past_due', 'unpaid')
-          `).run(company.id)
+          // Ensure subscription is active if it was past_due or unpaid
+          if (company.subscriptionStatus === 'past_due' || company.subscriptionStatus === 'unpaid') {
+            await convex.mutation(api.companies.updateSubscriptionStatus, {
+              id: company._id,
+              subscriptionStatus: 'active',
+            })
+          }
 
           // Log billing event
-          db.prepare(`
-            INSERT INTO billing_events (id, company_id, stripe_event_id, event_type, details)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(eventLogId, company.id, event.id, 'invoice_paid', JSON.stringify({
-            amount: invoice.amount_paid,
-            currency: invoice.currency,
-            invoice_id: invoice.id,
-            test_mode: isTestMode,
-          }))
+          await convex.mutation(api.auditLogs.create, {
+            companyId: company._id,
+            entityType: 'billing',
+            entityId: company._id as string,
+            action: 'invoice_paid',
+            details: {
+              amount: invoice.amount_paid,
+              currency: invoice.currency,
+              invoice_id: invoice.id,
+              stripe_event_id: event.id,
+              test_mode: isTestMode,
+            },
+          })
 
-          console.log(`[Stripe] Invoice paid for company ${company.id}`)
+          console.log(`[Stripe] Invoice paid for company ${company._id}`)
         }
       }
       break
@@ -302,32 +298,34 @@ async function processStripeEvent(event: Stripe.Event, isTestMode: boolean) {
 
       if (customerId) {
         // Find company by Stripe customer ID
-        const company = db.prepare(`
-          SELECT id FROM companies WHERE stripe_customer_id = ?
-        `).get(customerId) as { id: string } | undefined
+        const company = await convex.query(api.companies.getByStripeCustomerId, {
+          stripeCustomerId: customerId,
+        })
 
         if (company) {
           // Mark subscription as past due
-          db.prepare(`
-            UPDATE companies SET
-              subscription_status = 'past_due',
-              updated_at = datetime('now')
-            WHERE id = ?
-          `).run(company.id)
+          await convex.mutation(api.companies.updateSubscriptionStatus, {
+            id: company._id,
+            subscriptionStatus: 'past_due',
+          })
 
           // Log billing event
-          db.prepare(`
-            INSERT INTO billing_events (id, company_id, stripe_event_id, event_type, details)
-            VALUES (?, ?, ?, ?, ?)
-          `).run(eventLogId, company.id, event.id, 'payment_failed', JSON.stringify({
-            amount: invoice.amount_due,
-            currency: invoice.currency,
-            invoice_id: invoice.id,
-            attempt_count: invoice.attempt_count,
-            test_mode: isTestMode,
-          }))
+          await convex.mutation(api.auditLogs.create, {
+            companyId: company._id,
+            entityType: 'billing',
+            entityId: company._id as string,
+            action: 'payment_failed',
+            details: {
+              amount: invoice.amount_due,
+              currency: invoice.currency,
+              invoice_id: invoice.id,
+              attempt_count: invoice.attempt_count,
+              stripe_event_id: event.id,
+              test_mode: isTestMode,
+            },
+          })
 
-          console.log(`[Stripe] Payment failed for company ${company.id}`)
+          console.log(`[Stripe] Payment failed for company ${company._id}`)
 
           // TODO: Send email notification about failed payment
         }

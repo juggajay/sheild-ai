@@ -1,28 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '@/lib/db'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
-import { writeFile, mkdir } from 'fs/promises'
-import path from 'path'
+import { uploadFile, getStorageInfo } from '@/lib/storage'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface InsuranceRequirement {
-  id: string
-  coverage_type: string
-  minimum_limit: number | null
-  limit_type: string
-  maximum_excess: number | null
-  principal_indemnity_required: number
-  cross_liability_required: number
+  coverageType: string
+  minimumLimit: number | null
+  maximumExcess: number | null
+  principalIndemnityRequired: boolean
+  crossLiabilityRequired: boolean
 }
 
 interface Subcontractor {
-  id: string
+  _id: string
   name: string
   abn: string
-  broker_name?: string
-  broker_email?: string
-  contact_name?: string
-  contact_email?: string
+  brokerName?: string | null
+  brokerEmail?: string | null
+  contactName?: string | null
+  contactEmail?: string | null
 }
 
 // Simulated AI extraction of policy details from COC document
@@ -116,7 +116,7 @@ function extractPolicyDetails(fileName: string, subcontractor: Subcontractor) {
 function verifyAgainstRequirements(
   extractedData: ReturnType<typeof extractPolicyDetails>,
   requirements: InsuranceRequirement[],
-  projectEndDate?: string | null
+  projectEndDate?: number | null
 ) {
   const checks: Array<{
     check_type: string
@@ -181,78 +181,78 @@ function verifyAgainstRequirements(
 
   // Check each coverage type against requirements
   for (const requirement of requirements) {
-    const coverage = extractedData.coverages.find(c => c.type === requirement.coverage_type)
+    const coverage = extractedData.coverages.find(c => c.type === requirement.coverageType)
 
     if (!coverage) {
       checks.push({
-        check_type: `coverage_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} coverage`,
+        check_type: `coverage_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} coverage`,
         status: 'fail',
         details: 'Coverage not found in certificate'
       })
       deficiencies.push({
         type: 'missing_coverage',
         severity: 'critical',
-        description: `${formatCoverageType(requirement.coverage_type)} coverage is required but not present`,
-        required_value: requirement.minimum_limit ? `$${requirement.minimum_limit.toLocaleString()}` : 'Required',
+        description: `${formatCoverageType(requirement.coverageType)} coverage is required but not present`,
+        required_value: requirement.minimumLimit ? `$${requirement.minimumLimit.toLocaleString()}` : 'Required',
         actual_value: 'Not found'
       })
       continue
     }
 
     // Check minimum limit
-    if (requirement.minimum_limit && coverage.limit < requirement.minimum_limit) {
+    if (requirement.minimumLimit && coverage.limit < requirement.minimumLimit) {
       checks.push({
-        check_type: `coverage_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} limit`,
+        check_type: `coverage_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} limit`,
         status: 'fail',
-        details: `Limit $${coverage.limit.toLocaleString()} is below required $${requirement.minimum_limit.toLocaleString()}`
+        details: `Limit $${coverage.limit.toLocaleString()} is below required $${requirement.minimumLimit.toLocaleString()}`
       })
       deficiencies.push({
         type: 'insufficient_limit',
         severity: 'major',
-        description: `${formatCoverageType(requirement.coverage_type)} limit is below minimum requirement`,
-        required_value: `$${requirement.minimum_limit.toLocaleString()}`,
+        description: `${formatCoverageType(requirement.coverageType)} limit is below minimum requirement`,
+        required_value: `$${requirement.minimumLimit.toLocaleString()}`,
         actual_value: `$${coverage.limit.toLocaleString()}`
       })
     } else {
       checks.push({
-        check_type: `coverage_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} limit`,
+        check_type: `coverage_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} limit`,
         status: 'pass',
         details: `Limit $${coverage.limit.toLocaleString()} meets minimum requirement`
       })
     }
 
     // Check principal indemnity
-    if (requirement.principal_indemnity_required && 'principal_indemnity' in coverage && !coverage.principal_indemnity) {
+    if (requirement.principalIndemnityRequired && 'principal_indemnity' in coverage && !coverage.principal_indemnity) {
       checks.push({
-        check_type: `principal_indemnity_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} principal indemnity`,
+        check_type: `principal_indemnity_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} principal indemnity`,
         status: 'fail',
         details: 'Principal indemnity extension required but not present'
       })
       deficiencies.push({
         type: 'missing_endorsement',
         severity: 'major',
-        description: `Principal indemnity extension required for ${formatCoverageType(requirement.coverage_type)}`,
+        description: `Principal indemnity extension required for ${formatCoverageType(requirement.coverageType)}`,
         required_value: 'Yes',
         actual_value: 'No'
       })
     }
 
     // Check cross liability
-    if (requirement.cross_liability_required && 'cross_liability' in coverage && !coverage.cross_liability) {
+    if (requirement.crossLiabilityRequired && 'cross_liability' in coverage && !coverage.cross_liability) {
       checks.push({
-        check_type: `cross_liability_${requirement.coverage_type}`,
-        description: `${formatCoverageType(requirement.coverage_type)} cross liability`,
+        check_type: `cross_liability_${requirement.coverageType}`,
+        description: `${formatCoverageType(requirement.coverageType)} cross liability`,
         status: 'fail',
         details: 'Cross liability extension required but not present'
       })
       deficiencies.push({
         type: 'missing_endorsement',
         severity: 'major',
-        description: `Cross liability extension required for ${formatCoverageType(requirement.coverage_type)}`,
+        description: `Cross liability extension required for ${formatCoverageType(requirement.coverageType)}`,
         required_value: 'Yes',
         actual_value: 'No'
       })
@@ -309,8 +309,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    const db = getDb()
-
     // Get form data
     const formData = await request.formData()
     const mappingsJson = formData.get('mappings') as string | null
@@ -336,10 +334,6 @@ export async function POST(request: NextRequest) {
     if (files.length === 0) {
       return NextResponse.json({ error: 'No files provided' }, { status: 400 })
     }
-
-    // Ensure uploads directory exists
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads')
-    await mkdir(uploadsDir, { recursive: true })
 
     // Process each file mapping
     const results: Array<{
@@ -373,9 +367,10 @@ export async function POST(request: NextRequest) {
       }
 
       // Verify the broker has access to this subcontractor
-      const subcontractor = db.prepare(`
-        SELECT * FROM subcontractors WHERE id = ? AND broker_email = ?
-      `).get(mapping.subcontractorId, user.email) as Subcontractor | undefined
+      const subcontractor = await convex.query(api.portal.getSubcontractorByBrokerEmail, {
+        subcontractorId: mapping.subcontractorId as Id<"subcontractors">,
+        brokerEmail: user.email,
+      })
 
       if (!subcontractor) {
         results.push({
@@ -391,12 +386,11 @@ export async function POST(request: NextRequest) {
         continue
       }
 
-      // Get project info
-      const project = db.prepare(`
-        SELECT p.* FROM projects p
-        JOIN project_subcontractors ps ON p.id = ps.project_id
-        WHERE p.id = ? AND ps.subcontractor_id = ?
-      `).get(mapping.projectId, mapping.subcontractorId) as { id: string; name: string; end_date: string | null } | undefined
+      // Get project info and verify subcontractor is assigned
+      const project = await convex.query(api.portal.getProjectForSubcontractor, {
+        projectId: mapping.projectId as Id<"projects">,
+        subcontractorId: mapping.subcontractorId as Id<"subcontractors">,
+      })
 
       if (!project) {
         results.push({
@@ -413,76 +407,109 @@ export async function POST(request: NextRequest) {
       }
 
       try {
-        // Save file to uploads directory
-        const fileName = `${uuidv4()}_${file.name}`
-        const filePath = path.join(uploadsDir, fileName)
-        const fileUrl = `/uploads/${fileName}`
-
+        // Read file buffer
         const bytes = await file.arrayBuffer()
         const buffer = Buffer.from(bytes)
-        await writeFile(filePath, buffer)
+
+        // Upload file using storage library
+        const uploadResult = await uploadFile(buffer, file.name, {
+          folder: 'broker',
+          contentType: file.type
+        })
+
+        if (!uploadResult.success) {
+          results.push({
+            fileIndex: mapping.fileIndex,
+            fileName: file.name,
+            subcontractorId: mapping.subcontractorId,
+            subcontractorName: subcontractor.name,
+            projectId: mapping.projectId,
+            projectName: project.name,
+            status: 'error',
+            error: `Failed to upload file: ${uploadResult.error}`
+          })
+          continue
+        }
+
+        const fileUrl = uploadResult.fileUrl
+        const storageInfo = getStorageInfo()
+        console.log(`[BROKER BULK] File uploaded via ${storageInfo.provider}: ${fileUrl}`)
 
         // Create COC document record
-        const docId = uuidv4()
-        db.prepare(`
-          INSERT INTO coc_documents (id, subcontractor_id, project_id, file_url, file_name, file_size, source, processing_status)
-          VALUES (?, ?, ?, ?, ?, ?, 'portal', 'processing')
-        `).run(docId, mapping.subcontractorId, mapping.projectId, fileUrl, file.name, file.size)
+        const docId = await convex.mutation(api.documents.create, {
+          subcontractorId: mapping.subcontractorId as Id<"subcontractors">,
+          projectId: mapping.projectId as Id<"projects">,
+          fileUrl: fileUrl,
+          fileName: file.name,
+          fileSize: file.size,
+          source: 'portal',
+        })
 
         // Get project requirements
-        const requirements = db.prepare(`
-          SELECT * FROM insurance_requirements WHERE project_id = ?
-        `).all(mapping.projectId) as InsuranceRequirement[]
+        const requirements = await convex.query(api.insuranceRequirements.getByProject, {
+          projectId: mapping.projectId as Id<"projects">,
+        })
+
+        // Format requirements for verification
+        const formattedRequirements: InsuranceRequirement[] = requirements.map(r => ({
+          coverageType: r.coverageType,
+          minimumLimit: r.minimumLimit || null,
+          maximumExcess: r.maximumExcess || null,
+          principalIndemnityRequired: r.principalIndemnityRequired,
+          crossLiabilityRequired: r.crossLiabilityRequired,
+        }))
 
         // Extract policy details (simulated AI)
-        const extractedData = extractPolicyDetails(file.name, subcontractor)
+        const extractedData = extractPolicyDetails(file.name, {
+          _id: subcontractor._id,
+          name: subcontractor.name,
+          abn: subcontractor.abn,
+          brokerName: subcontractor.brokerName,
+          brokerEmail: subcontractor.brokerEmail,
+          contactName: subcontractor.contactName,
+          contactEmail: subcontractor.contactEmail,
+        })
 
         // Verify against requirements
-        const verification = verifyAgainstRequirements(extractedData, requirements, project.end_date)
+        const verification = verifyAgainstRequirements(extractedData, formattedRequirements, project.end_date ? new Date(project.end_date).getTime() : null)
 
         // Create verification record
-        const verificationId = uuidv4()
-        db.prepare(`
-          INSERT INTO verifications (id, coc_document_id, project_id, status, confidence_score, extracted_data, checks, deficiencies)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          verificationId,
-          docId,
-          mapping.projectId,
-          verification.status,
-          verification.confidence_score,
-          JSON.stringify(extractedData),
-          JSON.stringify(verification.checks),
-          JSON.stringify(verification.deficiencies)
-        )
+        await convex.mutation(api.verifications.create, {
+          cocDocumentId: docId,
+          projectId: mapping.projectId as Id<"projects">,
+          status: verification.status,
+          confidenceScore: verification.confidence_score,
+          extractedData: extractedData,
+          checks: verification.checks,
+          deficiencies: verification.deficiencies,
+        })
 
-        // Update document status
-        db.prepare(`
-          UPDATE coc_documents
-          SET processing_status = 'completed', processed_at = datetime('now'), updated_at = datetime('now')
-          WHERE id = ?
-        `).run(docId)
+        // Update document processing status
+        await convex.mutation(api.documents.updateProcessingStatus, {
+          id: docId,
+          processingStatus: 'completed',
+          processedAt: Date.now(),
+        })
 
         // If verification passed, update project_subcontractor status to compliant
         if (verification.status === 'pass') {
-          db.prepare(`
-            UPDATE project_subcontractors
-            SET status = 'compliant', updated_at = datetime('now')
-            WHERE project_id = ? AND subcontractor_id = ?
-          `).run(mapping.projectId, mapping.subcontractorId)
+          try {
+            await convex.mutation(api.projectSubcontractors.updateStatusByProjectAndSubcontractor, {
+              projectId: mapping.projectId as Id<"projects">,
+              subcontractorId: mapping.subcontractorId as Id<"subcontractors">,
+              status: 'compliant',
+            })
 
-          // Auto-resolve any active exceptions
-          const projectSubcontractor = db.prepare(`
-            SELECT id FROM project_subcontractors WHERE project_id = ? AND subcontractor_id = ?
-          `).get(mapping.projectId, mapping.subcontractorId) as { id: string } | undefined
-
-          if (projectSubcontractor) {
-            db.prepare(`
-              UPDATE exceptions
-              SET status = 'resolved', resolution_type = 'coc_updated', resolved_at = datetime('now'),
-                  resolution_notes = 'Automatically resolved - compliant COC uploaded via broker bulk upload'
-              WHERE project_subcontractor_id = ? AND status = 'active'
-            `).run(projectSubcontractor.id)
+            // Auto-resolve any active exceptions
+            await convex.mutation(api.exceptions.resolveActiveByProjectAndSubcontractor, {
+              projectId: mapping.projectId as Id<"projects">,
+              subcontractorId: mapping.subcontractorId as Id<"subcontractors">,
+              resolutionType: 'coc_updated',
+              resolutionNotes: 'Automatically resolved - compliant COC uploaded via broker bulk upload',
+            })
+          } catch (err) {
+            // Project-subcontractor link might not exist, that's OK
+            console.log('[BROKER BULK] Could not update project_subcontractor status:', err)
           }
         }
 
