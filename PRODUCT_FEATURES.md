@@ -9,7 +9,7 @@ Autonomous Certificate of Currency (COC) compliance platform for Australian cons
 
 ### Document Management
 - Upload COC documents (PDF support)
-- AI-powered document reading using GPT-4 Vision
+- AI-powered document reading using Google Gemini 2.0 Flash
 - OCR fallback with Tesseract.js for handwritten documents
 - Automatic data extraction (coverage amounts, policy numbers, expiry dates)
 - Secure document storage with encryption
@@ -46,10 +46,10 @@ Autonomous Certificate of Currency (COC) compliance platform for Australian cons
 - On-site date tracking
 
 ### Automated Communications
-- Deficiency notifications to brokers via SendGrid
+- Deficiency notifications to brokers via Resend
 - SMS notifications via Twilio
 - Follow-up sequence automation
-- Resend functionality
+- Re-send functionality for failed communications
 - Communication history tracking
 - Customizable email templates
 
@@ -108,9 +108,10 @@ Autonomous Certificate of Currency (COC) compliance platform for Australian cons
 ### Integrations
 - Google OAuth integration
 - Microsoft OAuth integration
-- SendGrid email service
+- Resend email service
 - Twilio SMS service
-- OpenAI GPT-4 Vision API
+- Google Gemini AI (gemini-2.0-flash-exp)
+- Stripe payments
 
 ### Security
 - JWT-based authentication
@@ -144,12 +145,15 @@ Autonomous Certificate of Currency (COC) compliance platform for Australian cons
 ## Tech Stack
 
 - **Frontend:** Next.js 14, React 18, Tailwind CSS, shadcn/ui
-- **Backend:** Next.js API routes
-- **Database:** Supabase (PostgreSQL) / SQLite (dev)
-- **AI:** OpenAI GPT-4 Vision, Tesseract.js OCR
-- **Email:** SendGrid
+- **Backend:** Next.js API routes, Convex functions
+- **Database:** Convex (real-time backend with automatic caching)
+- **AI:** Google Gemini 2.0 Flash (gemini-2.0-flash-exp), Tesseract.js OCR
+- **Email:** Resend
 - **SMS:** Twilio
+- **Payments:** Stripe
+- **State Management:** TanStack Query (React Query)
+- **Charts:** Recharts
 
 ---
 
-*Last updated: Based on codebase analysis*
+*Last updated: January 2025*
