@@ -5,8 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   Mail,
-  MessageSquare,
-  Phone,
   CheckCircle2,
   XCircle,
   ExternalLink,
@@ -14,8 +12,6 @@ import {
   Settings2,
   AlertCircle,
   Loader2,
-  HardDrive,
-  Cloud,
   Building2,
   Users
 } from "lucide-react"
@@ -27,16 +23,6 @@ interface IntegrationStatus {
   email: {
     microsoft365: { connected: boolean; configured?: boolean; email?: string; lastSync?: string; devMode?: boolean }
     google: { connected: boolean; configured?: boolean; email?: string; lastSync?: string; devMode?: boolean }
-  }
-  communication: {
-    sendgrid: { configured: boolean; verified?: boolean }
-    twilio: { configured: boolean; verified?: boolean }
-  }
-  storage?: {
-    provider: 'supabase' | 'local'
-    configured: boolean
-    bucket: string
-    description: string
   }
   construction?: {
     procore: {
@@ -63,15 +49,10 @@ export default function IntegrationsPage() {
       microsoft365: { connected: false },
       google: { connected: false }
     },
-    communication: {
-      sendgrid: { configured: false },
-      twilio: { configured: false }
-    },
     construction: {
       procore: { connected: false }
     }
   })
-  const [testingService, setTestingService] = useState<string | null>(null)
 
   // Handle OAuth callback query params
   useEffect(() => {
@@ -127,22 +108,9 @@ export default function IntegrationsPage() {
 
   const fetchIntegrationStatus = async () => {
     try {
-      // Fetch integration status
       const response = await fetch("/api/integrations/status")
       if (response.ok) {
         const data = await response.json()
-
-        // Also fetch storage status
-        try {
-          const storageResponse = await fetch("/api/storage/status")
-          if (storageResponse.ok) {
-            const storageData = await storageResponse.json()
-            data.storage = storageData.storage
-          }
-        } catch (storageError) {
-          console.error("Failed to fetch storage status:", storageError)
-        }
-
         setStatus(data)
       }
     } catch (error) {
@@ -242,66 +210,6 @@ export default function IntegrationsPage() {
         description: "An error occurred. Please try again.",
         variant: "destructive"
       })
-    }
-  }
-
-  const handleTestSendGrid = async () => {
-    setTestingService("sendgrid")
-    try {
-      const response = await fetch("/api/integrations/test/sendgrid", { method: "POST" })
-      const data = await response.json()
-
-      if (response.ok) {
-        toast({
-          title: "SendGrid Test Successful",
-          description: "A test email was sent successfully."
-        })
-        fetchIntegrationStatus()
-      } else {
-        toast({
-          title: "SendGrid Test Failed",
-          description: data.error || "Please check your SendGrid API key configuration.",
-          variant: "destructive"
-        })
-      }
-    } catch (error) {
-      toast({
-        title: "SendGrid Test Failed",
-        description: "Unable to connect to SendGrid. Please check your API key.",
-        variant: "destructive"
-      })
-    } finally {
-      setTestingService(null)
-    }
-  }
-
-  const handleTestTwilio = async () => {
-    setTestingService("twilio")
-    try {
-      const response = await fetch("/api/integrations/test/twilio", { method: "POST" })
-      const data = await response.json()
-
-      if (response.ok) {
-        toast({
-          title: "Twilio Test Successful",
-          description: "A test SMS was sent successfully."
-        })
-        fetchIntegrationStatus()
-      } else {
-        toast({
-          title: "Twilio Test Failed",
-          description: data.error || "Please check your Twilio credentials configuration.",
-          variant: "destructive"
-        })
-      }
-    } catch (error) {
-      toast({
-        title: "Twilio Test Failed",
-        description: "Unable to connect to Twilio. Please check your credentials.",
-        variant: "destructive"
-      })
-    } finally {
-      setTestingService(null)
     }
   }
 
@@ -507,256 +415,6 @@ export default function IntegrationsPage() {
           </div>
         </section>
 
-        {/* Communication Services */}
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <MessageSquare className="h-5 w-5 text-green-500" />
-            <h2 className="text-lg font-semibold text-slate-900">Communication Services</h2>
-          </div>
-          <p className="text-sm text-slate-500 mb-4">
-            Configure email and SMS services for automated notifications.
-          </p>
-
-          <div className="space-y-4">
-            {/* SendGrid */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-[#1A82E2] rounded-lg flex items-center justify-center">
-                      <Mail className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">SendGrid</CardTitle>
-                      <CardDescription>Transactional email delivery</CardDescription>
-                    </div>
-                  </div>
-                  <StatusBadge
-                    connected={status.communication.sendgrid.configured}
-                    verified={status.communication.sendgrid.verified}
-                  />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {status.communication.sendgrid.configured ? (
-                    <>
-                      <div className="flex items-center gap-2 text-sm text-green-600">
-                        <CheckCircle2 className="h-4 w-4" />
-                        API key configured
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleTestSendGrid}
-                          disabled={testingService === "sendgrid"}
-                        >
-                          {testingService === "sendgrid" ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          ) : (
-                            <Settings2 className="h-4 w-4 mr-2" />
-                          )}
-                          Test Connection
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2 text-sm text-amber-600">
-                        <AlertCircle className="h-4 w-4" />
-                        Not configured
-                      </div>
-                      <p className="text-sm text-slate-500">
-                        Set <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">SENDGRID_API_KEY</code> in your environment variables.
-                      </p>
-                      <a
-                        href="https://sendgrid.com/docs/for-developers/sending-email/api-getting-started/"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center text-sm text-primary hover:underline"
-                      >
-                        View SendGrid documentation
-                        <ExternalLink className="h-3 w-3 ml-1" />
-                      </a>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Twilio */}
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-[#F22F46] rounded-lg flex items-center justify-center">
-                      <Phone className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">Twilio</CardTitle>
-                      <CardDescription>SMS alerts and notifications</CardDescription>
-                    </div>
-                  </div>
-                  <StatusBadge
-                    connected={status.communication.twilio.configured}
-                    verified={status.communication.twilio.verified}
-                  />
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {status.communication.twilio.configured ? (
-                    <>
-                      <div className="flex items-center gap-2 text-sm text-green-600">
-                        <CheckCircle2 className="h-4 w-4" />
-                        Credentials configured
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleTestTwilio}
-                          disabled={testingService === "twilio"}
-                        >
-                          {testingService === "twilio" ? (
-                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                          ) : (
-                            <Settings2 className="h-4 w-4 mr-2" />
-                          )}
-                          Test Connection
-                        </Button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="flex items-center gap-2 text-sm text-amber-600">
-                        <AlertCircle className="h-4 w-4" />
-                        Not configured
-                      </div>
-                      <p className="text-sm text-slate-500">
-                        Set <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">TWILIO_ACCOUNT_SID</code>,
-                        <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs ml-1">TWILIO_AUTH_TOKEN</code>, and
-                        <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs ml-1">TWILIO_PHONE_NUMBER</code> in your environment variables.
-                      </p>
-                      <a
-                        href="https://www.twilio.com/docs/sms/quickstart"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center text-sm text-primary hover:underline"
-                      >
-                        View Twilio documentation
-                        <ExternalLink className="h-3 w-3 ml-1" />
-                      </a>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-
-        {/* File Storage */}
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <HardDrive className="h-5 w-5 text-purple-500" />
-            <h2 className="text-lg font-semibold text-slate-900">File Storage</h2>
-          </div>
-          <p className="text-sm text-slate-500 mb-4">
-            Configure where Certificate of Currency documents are stored.
-          </p>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    status.storage?.configured ? 'bg-[#3ECF8E]' : 'bg-slate-200'
-                  }`}>
-                    {status.storage?.configured ? (
-                      <Cloud className="h-5 w-5 text-white" />
-                    ) : (
-                      <HardDrive className="h-5 w-5 text-slate-500" />
-                    )}
-                  </div>
-                  <div>
-                    <CardTitle className="text-base">
-                      {status.storage?.configured ? 'Supabase Storage' : 'Local File Storage'}
-                    </CardTitle>
-                    <CardDescription>
-                      {status.storage?.configured
-                        ? 'Cloud storage for COC documents'
-                        : 'Documents stored locally (development mode)'}
-                    </CardDescription>
-                  </div>
-                </div>
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                  status.storage?.configured
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}>
-                  {status.storage?.configured ? (
-                    <>
-                      <CheckCircle2 className="h-3 w-3" />
-                      Cloud Storage
-                    </>
-                  ) : (
-                    <>
-                      <HardDrive className="h-3 w-3" />
-                      Local Storage
-                    </>
-                  )}
-                </span>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {status.storage?.configured ? (
-                  <>
-                    <div className="flex items-center gap-2 text-sm text-green-600">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Supabase Storage configured
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-slate-500">Storage bucket:</span>
-                      <span className="font-medium font-mono text-xs bg-slate-100 px-2 py-1 rounded">
-                        {status.storage.bucket}
-                      </span>
-                    </div>
-                    <p className="text-sm text-slate-500">
-                      {status.storage.description}
-                    </p>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-2 text-sm text-amber-600">
-                      <AlertCircle className="h-4 w-4" />
-                      Using local file storage
-                    </div>
-                    <p className="text-sm text-slate-500">
-                      Files are stored in <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">public/uploads/</code> directory.
-                      For production, configure Supabase Storage.
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      Set <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">NEXT_PUBLIC_SUPABASE_URL</code> and{' '}
-                      <code className="bg-slate-100 px-1.5 py-0.5 rounded text-xs">SUPABASE_SERVICE_ROLE_KEY</code> in your environment variables.
-                    </p>
-                    <a
-                      href="https://supabase.com/docs/guides/storage"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-sm text-primary hover:underline"
-                    >
-                      View Supabase Storage documentation
-                      <ExternalLink className="h-3 w-3 ml-1" />
-                    </a>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </section>
-
         {/* Construction Management */}
         <section>
           <div className="flex items-center gap-2 mb-4">
@@ -897,12 +555,11 @@ export default function IntegrationsPage() {
               <div className="space-y-2">
                 <h3 className="font-medium text-slate-900">Need help with integrations?</h3>
                 <p className="text-sm text-slate-500">
-                  Integrations require API keys and credentials from third-party services.
-                  Configure these in your <code className="bg-white px-1.5 py-0.5 rounded text-xs border">.env.local</code> file
-                  or your hosting provider's environment variables.
+                  Email integrations use OAuth to securely connect your inbox. Construction management integrations
+                  sync your projects and vendors automatically.
                 </p>
                 <p className="text-sm text-slate-500">
-                  For development, emails are logged to the console and files are stored locally instead of using cloud services.
+                  For development, connections are simulated without real API credentials.
                 </p>
               </div>
             </div>
