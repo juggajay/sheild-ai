@@ -51,10 +51,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const currentUser = getUserByToken(token)
-    if (!currentUser) {
+    const convex = getConvex()
+
+    // Use Convex for session validation (consistent with login route)
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
+
+    const { user } = sessionData
 
     const body = await request.json()
     const {
@@ -68,7 +73,7 @@ export async function POST(request: NextRequest) {
     } = body
 
     // Get company_id from user
-    const targetUserId = userId || currentUser.id
+    const targetUserId = userId || user._id
     const targetUserCompanyId = await convex.query(api.notifications.getUserCompanyId, {
       userId: targetUserId as Id<"users">,
     })
@@ -78,7 +83,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Security: Prevent IDOR - users can only create notifications for users in their own company
-    if (targetUserCompanyId !== currentUser.company_id) {
+    if (targetUserCompanyId !== user.companyId) {
       return NextResponse.json({ error: "Cannot create notifications for users outside your company" }, { status: 403 })
     }
 
@@ -108,10 +113,15 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Use Convex for session validation (consistent with login route)
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
+
+    const { user } = sessionData
 
     const body = await request.json()
     const { notificationIds, markAllRead } = body
@@ -119,7 +129,7 @@ export async function PATCH(request: NextRequest) {
     if (markAllRead) {
       // Mark all notifications as read for this user
       await convex.mutation(api.notifications.markAllAsRead, {
-        userId: user.id as Id<"users">,
+        userId: user._id as Id<"users">,
       })
 
       return NextResponse.json({ success: true, message: "All notifications marked as read" })
@@ -129,7 +139,7 @@ export async function PATCH(request: NextRequest) {
       // Mark specific notifications as read
       await convex.mutation(api.notifications.markMultipleAsRead, {
         notificationIds: notificationIds as Id<"notifications">[],
-        userId: user.id as Id<"users">,
+        userId: user._id as Id<"users">,
       })
 
       return NextResponse.json({ success: true, message: "Notifications marked as read" })
@@ -150,14 +160,19 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const user = getUserByToken(token)
-    if (!user) {
+    const convex = getConvex()
+
+    // Use Convex for session validation (consistent with login route)
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: "Invalid session" }, { status: 401 })
     }
 
+    const { user } = sessionData
+
     // Delete all notifications for this user
     await convex.mutation(api.notifications.deleteAllForUser, {
-      userId: user.id as Id<"users">,
+      userId: user._id as Id<"users">,
     })
 
     return NextResponse.json({ success: true, message: "All notifications cleared" })
