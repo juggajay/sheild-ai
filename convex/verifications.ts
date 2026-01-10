@@ -499,6 +499,48 @@ export const getExpirations = query({
   },
 })
 
+// Get latest verification for a subcontractor (with details)
+export const getLatestBySubcontractor = query({
+  args: { subcontractorId: v.id("subcontractors") },
+  handler: async (ctx, args) => {
+    // Get all documents for this subcontractor
+    const documents = await ctx.db
+      .query("cocDocuments")
+      .withIndex("by_subcontractor", (q) => q.eq("subcontractorId", args.subcontractorId))
+      .collect()
+
+    if (documents.length === 0) return null
+
+    // Get all verifications for these documents
+    let latestVerification = null
+    let latestTime = 0
+
+    for (const doc of documents) {
+      const verification = await ctx.db
+        .query("verifications")
+        .withIndex("by_document", (q) => q.eq("cocDocumentId", doc._id))
+        .first()
+
+      if (verification && verification._creationTime > latestTime) {
+        latestVerification = verification
+        latestTime = verification._creationTime
+      }
+    }
+
+    if (!latestVerification) return null
+
+    // Get related data
+    const document = await ctx.db.get(latestVerification.cocDocumentId)
+    const subcontractor = await ctx.db.get(args.subcontractorId)
+
+    return {
+      ...latestVerification,
+      subcontractor_name: subcontractor?.name,
+      subcontractor_abn: subcontractor?.abn,
+    }
+  },
+})
+
 // Get verification details for expiration reminder
 export const getForExpirationReminder = query({
   args: { verificationId: v.id("verifications") },

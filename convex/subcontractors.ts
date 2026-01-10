@@ -37,6 +37,27 @@ export const getByAbn = query({
   },
 })
 
+// Get subcontractors by multiple ABNs within company (for conflict detection)
+export const getByAbns = query({
+  args: {
+    companyId: v.id("companies"),
+    abns: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.abns.length === 0) return []
+
+    // Get all subcontractors for the company and filter by ABN
+    const allSubcontractors = await ctx.db
+      .query("subcontractors")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    // Filter to those with matching ABNs
+    const abnSet = new Set(args.abns)
+    return allSubcontractors.filter((sub) => sub.abn && abnSet.has(sub.abn))
+  },
+})
+
 // Search subcontractors by name
 export const searchByName = query({
   args: {

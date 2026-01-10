@@ -1,17 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import { getDb } from '@/lib/db'
-import { pushComplianceToProcore, getCompliancePushHistory } from '@/lib/procore/hooks'
+import { pushComplianceToProcoreConvex, getCompliancePushHistoryConvex } from '@/lib/procore/hooks-convex'
+
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface PushComplianceBody {
   subcontractorId: string
   verificationId?: string // If not provided, uses the latest verification
-}
-
-interface Verification {
-  id: string
-  status: string
 }
 
 /**
@@ -28,7 +27,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const user = await getUserByToken(token)
+    const user = getUserByToken(token)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -47,29 +46,24 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const db = getDb()
-
-    // Verify subcontractor belongs to user's company
-    const subcontractor = db.prepare(`
-      SELECT id, name, company_id FROM subcontractors WHERE id = ?
-    `).get(subcontractorId) as { id: string; name: string; company_id: string } | undefined
+    // Verify subcontractor exists and belongs to user's company using Convex
+    const subcontractor = await convex.query(api.subcontractors.getById, {
+      id: subcontractorId as Id<"subcontractors">,
+    })
 
     if (!subcontractor) {
       return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
     }
 
-    if (subcontractor.company_id !== user.company_id) {
+    if (subcontractor.companyId !== user.company_id) {
       return NextResponse.json({ error: 'Access denied to this subcontractor' }, { status: 403 })
     }
 
     // If no verification ID provided, get the latest one
     if (!verificationId) {
-      const latestVerification = db.prepare(`
-        SELECT id, status FROM verifications
-        WHERE subcontractor_id = ?
-        ORDER BY created_at DESC
-        LIMIT 1
-      `).get(subcontractorId) as Verification | undefined
+      const latestVerification = await convex.query(api.verifications.getLatestBySubcontractor, {
+        subcontractorId: subcontractorId as Id<"subcontractors">,
+      })
 
       if (!latestVerification) {
         return NextResponse.json({
@@ -77,11 +71,12 @@ export async function POST(request: NextRequest) {
         }, { status: 404 })
       }
 
-      verificationId = latestVerification.id
+      verificationId = latestVerification._id
     }
 
-    // Push compliance status
-    const result = await pushComplianceToProcore(
+    // Push compliance status using Convex
+    const result = await pushComplianceToProcoreConvex(
+      convex,
       user.company_id!,
       subcontractorId,
       verificationId
@@ -122,7 +117,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const user = await getUserByToken(token)
+    const user = getUserByToken(token)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -136,32 +131,28 @@ export async function GET(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const db = getDb()
-
-    // Verify subcontractor belongs to user's company
-    const subcontractor = db.prepare(`
-      SELECT company_id FROM subcontractors WHERE id = ?
-    `).get(subcontractorId) as { company_id: string } | undefined
+    // Verify subcontractor belongs to user's company using Convex
+    const subcontractor = await convex.query(api.subcontractors.getById, {
+      id: subcontractorId as Id<"subcontractors">,
+    })
 
     if (!subcontractor) {
       return NextResponse.json({ error: 'Subcontractor not found' }, { status: 404 })
     }
 
-    if (subcontractor.company_id !== user.company_id) {
+    if (subcontractor.companyId !== user.company_id) {
       return NextResponse.json({ error: 'Access denied to this subcontractor' }, { status: 403 })
     }
 
-    // Get push history
-    const history = getCompliancePushHistory(user.company_id!, subcontractorId)
-
-    // Parse details JSON
-    const parsedHistory = history.map(h => ({
-      ...h,
-      details: JSON.parse(h.details || '{}'),
-    }))
+    // Get push history using Convex
+    const history = await getCompliancePushHistoryConvex(
+      convex,
+      user.company_id!,
+      subcontractorId
+    )
 
     return NextResponse.json({
-      history: parsedHistory,
+      history,
     })
   } catch (error) {
     console.error('Procore push compliance history error:', error)

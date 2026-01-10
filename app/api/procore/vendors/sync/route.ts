@@ -1,20 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
 import { getUserByToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import { getDb } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
 import { createProcoreClient } from '@/lib/procore'
-import { syncVendorsFromProcore } from '@/lib/procore/sync'
+import { syncVendorsFromProcoreConvex } from '@/lib/procore/sync-convex'
 
-interface OAuthConnection {
-  id: string
-  company_id: string
-  access_token: string
-  refresh_token: string | null
-  procore_company_id: number | null
-  procore_company_name: string | null
-  pending_company_selection: number
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface SyncVendorsBody {
   vendorIds: number[]
@@ -38,7 +31,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const user = await getUserByToken(token)
+    const user = getUserByToken(token)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -69,13 +62,12 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const db = getDb()
-
-    // Validate project if specified
+    // Validate project if specified using Convex
     if (projectId) {
-      const project = db.prepare(`
-        SELECT id FROM projects WHERE id = ? AND company_id = ?
-      `).get(projectId, user.company_id)
+      const project = await convex.query(api.projects.getByIdForCompany, {
+        id: projectId as Id<"projects">,
+        companyId: user.company_id as Id<"companies">,
+      })
 
       if (!project) {
         return NextResponse.json({
@@ -84,11 +76,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Get Procore connection
-    const connection = db.prepare(`
-      SELECT * FROM oauth_connections
-      WHERE company_id = ? AND provider = 'procore'
-    `).get(user.company_id) as OAuthConnection | undefined
+    // Get Procore connection from Convex
+    const connection = await convex.query(api.integrations.getConnection, {
+      companyId: user.company_id as Id<"companies">,
+      provider: 'procore',
+    })
 
     if (!connection) {
       return NextResponse.json({
@@ -96,29 +88,33 @@ export async function POST(request: NextRequest) {
       }, { status: 404 })
     }
 
-    if (connection.pending_company_selection || !connection.procore_company_id) {
+    if (connection.pendingCompanySelection || !connection.procoreCompanyId) {
       return NextResponse.json({
         error: 'Please select a Procore company first.',
       }, { status: 400 })
     }
 
-    // Create Procore client
+    // Create Procore client with token refresh handler
     const client = createProcoreClient({
-      companyId: connection.procore_company_id,
-      accessToken: connection.access_token,
-      refreshToken: connection.refresh_token || '',
+      companyId: connection.procoreCompanyId,
+      accessToken: connection.accessToken,
+      refreshToken: connection.refreshToken || '',
       onTokenRefresh: async (tokens) => {
-        db.prepare(`
-          UPDATE oauth_connections
-          SET access_token = ?, refresh_token = ?, token_expires_at = datetime('now', '+' || ? || ' seconds'), updated_at = datetime('now')
-          WHERE id = ?
-        `).run(tokens.access_token, tokens.refresh_token, tokens.expires_in, connection.id)
+        const tokenExpiresAt = Date.now() + (tokens.expires_in || 7200) * 1000
+        await convex.mutation(api.integrations.updateConnectionTokens, {
+          companyId: user.company_id as Id<"companies">,
+          provider: 'procore',
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          tokenExpiresAt,
+        })
       },
     })
 
-    // Sync vendors
+    // Sync vendors using Convex
     console.log(`[Procore Sync] Starting vendor sync for ${vendorIds.length} vendors`)
-    const result = await syncVendorsFromProcore(
+    const result = await syncVendorsFromProcoreConvex(
+      convex,
       client,
       user.company_id!,
       vendorIds,
@@ -126,14 +122,13 @@ export async function POST(request: NextRequest) {
     )
 
     // Create audit log entry
-    db.prepare(`
-      INSERT INTO audit_logs (id, company_id, user_id, entity_type, entity_id, action, details)
-      VALUES (?, ?, ?, 'integration', 'procore', 'sync_vendors', ?)
-    `).run(
-      uuidv4(),
-      user.company_id,
-      user.id,
-      JSON.stringify({
+    await convex.mutation(api.auditLogs.create, {
+      companyId: user.company_id as Id<"companies">,
+      userId: user.id as Id<"users">,
+      entityType: 'integration',
+      entityId: 'procore',
+      action: 'sync_vendors',
+      details: {
         vendorIds,
         projectId,
         options: { skipDuplicates, mergeExisting },
@@ -143,8 +138,8 @@ export async function POST(request: NextRequest) {
         skipped: result.skipped,
         errors: result.errors,
         duration_ms: result.duration_ms,
-      })
-    )
+      },
+    })
 
     // Collect warnings for vendors without ABN
     const warnings: string[] = []

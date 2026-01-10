@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUserByToken, getUserByTokenAsync } from '@/lib/auth'
+import { ConvexHttpClient } from 'convex/browser'
+import { api } from '@/convex/_generated/api'
+import type { Id } from '@/convex/_generated/dataModel'
+import { getUserByToken } from '@/lib/auth'
 import { cookies } from 'next/headers'
-import { getDb, isProduction, getSupabase } from '@/lib/db'
 import { createProcoreClient, type ProcoreProject } from '@/lib/procore'
 
-interface OAuthConnection {
-  id: string
-  company_id: string
-  access_token: string
-  refresh_token: string | null
-  procore_company_id: number | null
-  procore_company_name: string | null
-  pending_company_selection: number
-}
-
-interface ProcoreMapping {
-  procore_entity_id: number
-  shield_entity_id: string
-}
+const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
 
 interface ProjectWithSyncStatus extends ProcoreProject {
   syncStatus: 'synced' | 'not_synced' | 'updated'
@@ -39,11 +28,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get user - use async version for production (Supabase), sync for dev (SQLite)
-    const user = isProduction
-      ? await getUserByTokenAsync(token)
-      : getUserByToken(token)
-
+    const user = getUserByToken(token)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -53,30 +38,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Admin or risk manager access required' }, { status: 403 })
     }
 
-    let connection: OAuthConnection | undefined
-
-    if (isProduction) {
-      const supabase = getSupabase()
-      const { data, error: queryError } = await supabase
-        .from('oauth_connections')
-        .select('*')
-        .eq('company_id', user.company_id)
-        .eq('provider', 'procore')
-        .single()
-
-      if (queryError) {
-        console.error('[Procore] Connection lookup error:', queryError)
-      }
-      if (data) {
-        connection = data as OAuthConnection
-      }
-    } else {
-      const db = getDb()
-      connection = db.prepare(`
-        SELECT * FROM oauth_connections
-        WHERE company_id = ? AND provider = 'procore'
-      `).get(user.company_id) as OAuthConnection | undefined
-    }
+    // Get Procore connection from Convex
+    const connection = await convex.query(api.integrations.getConnection, {
+      companyId: user.company_id as Id<"companies">,
+      provider: 'procore',
+    })
 
     if (!connection) {
       return NextResponse.json({
@@ -85,7 +51,7 @@ export async function GET(request: NextRequest) {
       }, { status: 404 })
     }
 
-    if (connection.pending_company_selection || !connection.procore_company_id) {
+    if (connection.pendingCompanySelection || !connection.procoreCompanyId) {
       return NextResponse.json({
         error: 'Please select a Procore company first.',
         needsCompanySelection: true,
@@ -99,63 +65,37 @@ export async function GET(request: NextRequest) {
 
     // Create Procore client with token refresh handler
     const client = createProcoreClient({
-      companyId: connection.procore_company_id,
-      accessToken: connection.access_token,
-      refreshToken: connection.refresh_token || '',
+      companyId: connection.procoreCompanyId,
+      accessToken: connection.accessToken,
+      refreshToken: connection.refreshToken || '',
       onTokenRefresh: async (tokens) => {
-        // Update stored tokens
-        if (isProduction) {
-          const supabase = getSupabase()
-          const tokenExpiresAt = new Date(Date.now() + (tokens.expires_in || 7200) * 1000).toISOString()
-          await supabase.from('oauth_connections').update({
-            access_token: tokens.access_token,
-            refresh_token: tokens.refresh_token,
-            token_expires_at: tokenExpiresAt,
-            updated_at: new Date().toISOString()
-          }).eq('id', connection!.id)
-        } else {
-          const db = getDb()
-          db.prepare(`
-            UPDATE oauth_connections
-            SET access_token = ?, refresh_token = ?, token_expires_at = datetime('now', '+' || ? || ' seconds'), updated_at = datetime('now')
-            WHERE id = ?
-          `).run(tokens.access_token, tokens.refresh_token, tokens.expires_in, connection!.id)
-        }
+        // Update stored tokens in Convex
+        const tokenExpiresAt = Date.now() + (tokens.expires_in || 7200) * 1000
+        await convex.mutation(api.integrations.updateConnectionTokens, {
+          companyId: user.company_id as Id<"companies">,
+          provider: 'procore',
+          accessToken: tokens.access_token,
+          refreshToken: tokens.refresh_token,
+          tokenExpiresAt,
+        })
       },
     })
 
     // Fetch projects from Procore
     const projectsResponse = await client.getProjects({ page, per_page: perPage })
 
-    // Get existing mappings
-    const projectIds = projectsResponse.data.map(p => p.id)
-    let existingMappings: ProcoreMapping[] = []
+    // Get existing mappings from Convex
+    const allMappings = await convex.query(api.integrations.getProcoreMappingsByCompany, {
+      companyId: user.company_id as Id<"companies">,
+    })
 
-    if (projectIds.length > 0) {
-      if (isProduction) {
-        const supabase = getSupabase()
-        const { data } = await supabase
-          .from('procore_mappings')
-          .select('procore_entity_id, shield_entity_id')
-          .eq('company_id', user.company_id)
-          .eq('procore_company_id', connection.procore_company_id)
-          .eq('procore_entity_type', 'project')
-          .in('procore_entity_id', projectIds)
-        existingMappings = (data || []) as ProcoreMapping[]
-      } else {
-        const db = getDb()
-        existingMappings = db.prepare(`
-          SELECT procore_entity_id, shield_entity_id
-          FROM procore_mappings
-          WHERE company_id = ? AND procore_company_id = ?
-            AND procore_entity_type = 'project'
-            AND procore_entity_id IN (${projectIds.map(() => '?').join(',')})
-        `).all(user.company_id, connection.procore_company_id, ...projectIds) as ProcoreMapping[]
-      }
-    }
+    // Filter to project mappings for this Procore company
+    const projectMappings = allMappings.filter(
+      m => m.procoreCompanyId === connection.procoreCompanyId && m.procoreEntityType === 'project'
+    )
 
     const mappingsByProcoreId = new Map(
-      existingMappings.map(m => [m.procore_entity_id, m.shield_entity_id])
+      projectMappings.map(m => [m.procoreEntityId, m.shieldEntityId])
     )
 
     // Add sync status to projects
@@ -174,8 +114,8 @@ export async function GET(request: NextRequest) {
         total: projectsResponse.total,
       },
       procoreCompany: {
-        id: connection.procore_company_id,
-        name: connection.procore_company_name,
+        id: connection.procoreCompanyId,
+        name: connection.procoreCompanyName,
       },
     })
   } catch (error) {
