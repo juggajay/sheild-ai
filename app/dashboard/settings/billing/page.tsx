@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { CreditCard, Check, AlertCircle, ArrowRight, Users, Briefcase, Building2, Rocket, Loader2, Gift, ExternalLink } from "lucide-react"
@@ -16,7 +16,8 @@ import { PRICING_PLANS, FOUNDER_COUPON, formatPrice, getAnnualSavings, type Subs
 
 type BillingInterval = 'monthly' | 'annual'
 
-export default function BillingPage() {
+// Wrap the main content in a component that uses useSearchParams
+function BillingContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { data: user } = useUser()
@@ -486,5 +487,18 @@ function PlanCard({
         </Button>
       </CardContent>
     </Card>
+  )
+}
+
+// Default export with Suspense boundary for useSearchParams
+export default function BillingPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    }>
+      <BillingContent />
+    </Suspense>
   )
 }
