@@ -302,6 +302,24 @@ export const getByStripeCustomerId = query({
   },
 })
 
+// Find company by Stripe subscription ID
+export const getByStripeSubscriptionId = query({
+  args: { stripeSubscriptionId: v.string() },
+  handler: async (ctx, args) => {
+    // Since stripeSubscriptionId is stored in settings, we need to scan
+    const companies = await ctx.db.query("companies").collect()
+
+    for (const company of companies) {
+      const settings = company.settings as Record<string, unknown> || {}
+      if (settings.stripeSubscriptionId === args.stripeSubscriptionId) {
+        return company
+      }
+    }
+
+    return null
+  },
+})
+
 // Update subscription from Stripe webhook
 export const updateSubscriptionFromWebhook = mutation({
   args: {
@@ -618,5 +636,49 @@ export const resetBillingPeriodVendorCount = mutation({
     })
 
     return { resetTo: activeCount, billingPeriodStart: args.billingPeriodStart ?? Date.now() }
+  },
+})
+
+// Reset billing period vendor count by Stripe subscription ID
+// Called by Stripe webhook on invoice.paid for subscription renewals
+export const resetBillingPeriodBySubscriptionId = mutation({
+  args: {
+    stripeSubscriptionId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Find company by subscription ID
+    const companies = await ctx.db.query("companies").collect()
+    let company = null
+
+    for (const c of companies) {
+      const settings = c.settings as Record<string, unknown> || {}
+      if (settings.stripeSubscriptionId === args.stripeSubscriptionId) {
+        company = c
+        break
+      }
+    }
+
+    if (!company) {
+      console.warn(`No company found for subscription: ${args.stripeSubscriptionId}`)
+      return { success: false, reason: "Company not found" }
+    }
+
+    // Count current active vendors - this becomes the new baseline
+    const subcontractors = await ctx.db
+      .query("subcontractors")
+      .withIndex("by_company", (q) => q.eq("companyId", company._id))
+      .collect()
+
+    const activeCount = subcontractors.length
+    const billingPeriodStart = Date.now()
+
+    await ctx.db.patch(company._id, {
+      vendorsAddedThisPeriod: activeCount, // Reset to current count
+      billingPeriodStart,
+      updatedAt: Date.now(),
+    })
+
+    console.log(`Reset vendor count for ${company.name}: ${activeCount}`)
+    return { success: true, companyId: company._id, resetTo: activeCount, billingPeriodStart }
   },
 })
