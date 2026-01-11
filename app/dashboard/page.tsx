@@ -425,7 +425,7 @@ export default function DashboardPage() {
                   <Mail className={`h-5 w-5 ${morningBrief?.pendingResponses?.length ? "text-amber-500" : "text-slate-400"}`} />
                   Pending Responses
                 </CardTitle>
-                <CardDescription>Brokers who haven&apos;t responded to deficiency notices</CardDescription>
+                <CardDescription>Subcontractors who haven&apos;t responded to deficiency notices</CardDescription>
               </div>
               {morningBrief?.pendingResponses && morningBrief.pendingResponses.length > 0 && (
                 <Badge variant="outline" className="bg-amber-100 text-amber-700">

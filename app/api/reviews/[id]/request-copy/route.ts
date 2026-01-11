@@ -63,19 +63,19 @@ export async function POST(
       message,
     })
 
-    // Send email to subcontractor
+    // Send email to subcontractor in plain English
     if (result.subcontractorEmail) {
       try {
         await sendEmail({
           to: result.subcontractorEmail,
-          subject: `Clearer Copy Required: Certificate of Currency for ${result.projectName}`,
+          subject: `We need a clearer copy of your insurance certificate - ${result.projectName}`,
           html: `
-            <p>Dear ${result.subcontractorName},</p>
-            <p>We have reviewed your Certificate of Currency submission for <strong>${result.projectName}</strong> and require a clearer copy of the document.</p>
-            ${message ? `<p><strong>Additional notes:</strong> ${message}</p>` : ''}
-            <p>Please re-upload a clear, legible copy of your Certificate of Currency through the portal.</p>
-            <p>If you have any questions, please contact us.</p>
-            <p>Thank you for your cooperation.</p>
+            <p>Hi ${result.subcontractorName},</p>
+            <p>We've had a look at the insurance certificate you sent for <strong>${result.projectName}</strong>, but it's a bit hard to read.</p>
+            ${message ? `<p><strong>Note:</strong> ${message}</p>` : ''}
+            <p>Could you please upload a clearer copy? Make sure the text is easy to read and nothing is cut off.</p>
+            <p>If you have any questions, just reply to this email.</p>
+            <p>Thanks!</p>
           `,
         })
       } catch (emailError) {

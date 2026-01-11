@@ -275,27 +275,29 @@ export async function sendDeficiencyEmail(params: {
     upload_link: uploadLink || process.env.NEXT_PUBLIC_APP_URL || 'https://riskshield.ai'
   }
 
-  // Use custom template or default
+  // Use custom template or default - written in plain English for tradies
   const subject = templateSubject
     ? renderTemplate(templateSubject, data)
-    : `Certificate of Currency Deficiency Notice - ${subcontractorName} / ${projectName}`
+    : `Issue with your insurance certificate for ${projectName}`
 
   const body = templateBody
     ? renderTemplate(templateBody, data)
-    : `Dear ${recipientName},
+    : `Hi ${recipientName},
 
-We have reviewed the Certificate of Currency submitted for ${subcontractorName} (ABN: ${subcontractorAbn}) and found the following compliance issues for the ${projectName} project:
+We've checked the insurance certificate you sent for ${subcontractorName} on the ${projectName} project, and there are some issues that need fixing:
 
-DEFICIENCIES FOUND:
+WHAT NEEDS TO BE FIXED:
 ${deficiencyList}
 
-ACTION REQUIRED:
-Please provide an updated Certificate of Currency that addresses the above deficiencies by ${data.due_date}.
+WHAT TO DO:
+1. Contact your insurance broker or provider
+2. Get an updated Certificate of Currency that fixes the issues above
+3. Send it back to us by ${data.due_date}
 
-If you have any questions or need clarification on the requirements, please don't hesitate to contact us.
+If you have any questions, just reply to this email and we'll help.
 
-Best regards,
-RiskShield AI Compliance Team`
+Thanks,
+The Compliance Team`
 
   return sendEmail({
     to: recipientEmail,
@@ -360,6 +362,321 @@ The Compliance Team`
     subject,
     html: textToHtml(body),
     text: body
+  })
+}
+
+/**
+ * Deficiency type with required/actual values for plain-English formatting
+ */
+interface DeficiencyItem {
+  type?: string
+  description?: string
+  message?: string
+  check_name?: string
+  required_value?: string
+  actual_value?: string
+  severity?: string
+}
+
+/**
+ * Format a coverage type into plain English
+ */
+function formatCoverageTypePlainEnglish(type: string): string {
+  const mappings: Record<string, string> = {
+    'public_liability': 'Public Liability',
+    'professional_indemnity': 'Professional Indemnity',
+    'workers_comp': 'Workers Compensation',
+    'motor_vehicle': 'Motor Vehicle',
+    'contract_works': 'Contract Works',
+    'product_liability': 'Product Liability',
+  }
+  return mappings[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+}
+
+/**
+ * Convert deficiency to plain-English explanation
+ */
+function formatDeficiencyPlainEnglish(deficiency: DeficiencyItem): string {
+  const type = deficiency.type || ''
+  const required = deficiency.required_value || ''
+  const actual = deficiency.actual_value || ''
+
+  // Handle common deficiency types with plain English
+  switch (type) {
+    case 'expired_policy':
+      return `Your policy has expired${actual ? ` (${actual})` : ''}`
+
+    case 'policy_expires_before_project':
+      return `Your policy expires before the project ends - needs to be valid until ${required}`
+
+    case 'insufficient_limit':
+      // Extract coverage type from description if available
+      const limitMatch = deficiency.description?.match(/^(.*?) limit/i)
+      const coverageType = limitMatch ? limitMatch[1] : 'Coverage'
+      return `${coverageType} is ${actual} — they require ${required}`
+
+    case 'missing_coverage':
+      const coverageMatch = deficiency.description?.match(/^(.*?) coverage/i)
+      const missingType = coverageMatch ? coverageMatch[1] : 'Required coverage'
+      return `${missingType} coverage is missing from your certificate`
+
+    case 'excess_too_high':
+      const excessMatch = deficiency.description?.match(/^(.*?) excess/i)
+      const excessType = excessMatch ? excessMatch[1] : 'Coverage'
+      return `${excessType} excess is ${actual} — maximum allowed is ${required}`
+
+    case 'abn_mismatch':
+      return `The ABN on your certificate doesn't match your registered ABN`
+
+    case 'unlicensed_insurer':
+      return `Your insurer needs to be APRA-licensed in Australia`
+
+    case 'principal_indemnity_missing':
+      return `Your policy needs to include the builder as an interested party`
+
+    case 'cross_liability_missing':
+      return `Your policy needs a cross liability clause`
+
+    default:
+      // Fallback to description if available, otherwise use type
+      if (deficiency.description) {
+        // Try to simplify technical language
+        let desc = deficiency.description
+          .replace(/Principal Indemnity/gi, 'builder as interested party')
+          .replace(/Cross Liability/gi, 'cross liability clause')
+          .replace(/APRA-licensed/gi, 'Australian-licensed')
+
+        if (required && actual) {
+          return `${desc} (you have ${actual}, they need ${required})`
+        }
+        return desc
+      }
+      return deficiency.message || 'Issue with your certificate'
+  }
+}
+
+/**
+ * Send a plain-English follow-up email to subcontractor about certificate issues
+ * This is designed for subcontractors who may not understand insurance jargon
+ */
+export async function sendSubcontractorFollowUpEmail(params: {
+  recipientEmail: string
+  recipientName?: string
+  subcontractorName: string
+  projectName: string
+  builderName: string
+  deficiencies: DeficiencyItem[]
+  daysWaiting: number
+  followUpNumber: number
+  uploadLink?: string
+  ccEmails?: string[]
+}): Promise<EmailResult> {
+  const {
+    recipientEmail,
+    recipientName,
+    subcontractorName,
+    projectName,
+    builderName,
+    deficiencies,
+    daysWaiting,
+    followUpNumber,
+    uploadLink,
+    ccEmails
+  } = params
+
+  const isUrgent = followUpNumber >= 3 || daysWaiting >= 7
+  const isFinal = followUpNumber >= 3
+
+  // Format deficiencies in plain English
+  const issuesList = deficiencies
+    .map(d => `• ${formatDeficiencyPlainEnglish(d)}`)
+    .join('\n')
+
+  // Determine urgency level for subject
+  let urgencyPrefix = ''
+  if (isFinal) {
+    urgencyPrefix = '[FINAL NOTICE] '
+  } else if (isUrgent) {
+    urgencyPrefix = '[Action Required] '
+  }
+
+  const subject = `${urgencyPrefix}Insurance certificate issue for ${projectName}`
+
+  // Build the email body in plain English
+  const greeting = recipientName ? `Hi ${recipientName}` : `Hi ${subcontractorName}`
+
+  let body = `${greeting},
+
+Your insurance certificate for the ${projectName} project with ${builderName} has ${deficiencies.length === 1 ? 'an issue' : 'some issues'} that need to be fixed:
+
+${issuesList}
+
+`
+
+  if (isFinal) {
+    body += `This is our final reminder. We first contacted you ${daysWaiting} days ago about this.
+
+If we don't receive an updated certificate soon, ${builderName} may need to restrict your access to the project until this is resolved.
+
+`
+  } else if (followUpNumber === 2) {
+    body += `This is a reminder — we first contacted you ${daysWaiting} days ago about this.
+
+`
+  }
+
+  body += `WHAT TO DO
+----------
+1. Contact your insurance broker or provider
+2. Get an updated Certificate of Currency that fixes the ${deficiencies.length === 1 ? 'issue above' : 'issues above'}
+3. Upload it here: ${uploadLink || 'Contact the builder for upload instructions'}
+
+`
+
+  if (!isFinal) {
+    body += `If you've already sent an updated certificate, please ignore this email.
+
+`
+  }
+
+  body += `Questions? Reply to this email and we'll help.
+
+Thanks,
+${builderName} Compliance Team`
+
+  // Create HTML version with better formatting
+  const htmlBody = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      line-height: 1.6;
+      color: #1a1a1a;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .header {
+      ${isUrgent ? 'background: #fef3cd; border-left: 4px solid #ffc107;' : 'background: #e7f3ff; border-left: 4px solid #0066cc;'}
+      padding: 16px;
+      margin-bottom: 24px;
+      border-radius: 4px;
+    }
+    .header h2 {
+      margin: 0;
+      color: ${isUrgent ? '#856404' : '#004085'};
+      font-size: 18px;
+    }
+    .issues-box {
+      background: #fff5f5;
+      border: 1px solid #fed7d7;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 20px 0;
+    }
+    .issues-box h3 {
+      margin: 0 0 12px 0;
+      color: #c53030;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+    .issue-item {
+      padding: 8px 0;
+      border-bottom: 1px solid #fed7d7;
+      color: #2d3748;
+    }
+    .issue-item:last-child {
+      border-bottom: none;
+    }
+    .action-box {
+      background: #f0fff4;
+      border: 1px solid #9ae6b4;
+      border-radius: 8px;
+      padding: 16px;
+      margin: 20px 0;
+    }
+    .action-box h3 {
+      margin: 0 0 12px 0;
+      color: #276749;
+      font-size: 14px;
+      text-transform: uppercase;
+    }
+    .cta-button {
+      display: inline-block;
+      background: #0066cc;
+      color: white !important;
+      text-decoration: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      font-weight: 600;
+      margin-top: 12px;
+    }
+    .warning-text {
+      color: #c53030;
+      font-weight: 600;
+    }
+    .footer {
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+      font-size: 12px;
+      color: #718096;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>${isFinal ? '⚠️ Final Notice: ' : isUrgent ? '⚠️ ' : ''}Insurance certificate issue for ${escapeHtml(projectName)}</h2>
+  </div>
+
+  <p>${greeting},</p>
+
+  <p>Your insurance certificate for the <strong>${escapeHtml(projectName)}</strong> project with <strong>${escapeHtml(builderName)}</strong> has ${deficiencies.length === 1 ? 'an issue' : 'some issues'} that need to be fixed:</p>
+
+  <div class="issues-box">
+    <h3>Issues Found</h3>
+    ${deficiencies.map(d => `<div class="issue-item">${escapeHtml(formatDeficiencyPlainEnglish(d))}</div>`).join('')}
+  </div>
+
+  ${isFinal ? `
+  <p class="warning-text">This is our final reminder. We first contacted you ${daysWaiting} days ago.</p>
+  <p>If we don't receive an updated certificate soon, ${escapeHtml(builderName)} may need to restrict your access to the project until this is resolved.</p>
+  ` : followUpNumber === 2 ? `
+  <p>This is a reminder — we first contacted you ${daysWaiting} days ago about this.</p>
+  ` : ''}
+
+  <div class="action-box">
+    <h3>What To Do</h3>
+    <ol>
+      <li>Contact your insurance broker or provider</li>
+      <li>Get an updated Certificate of Currency that fixes the ${deficiencies.length === 1 ? 'issue above' : 'issues above'}</li>
+      <li>Upload it using the button below</li>
+    </ol>
+    ${uploadLink ? `<a href="${uploadLink}" class="cta-button">Upload Updated Certificate</a>` : ''}
+  </div>
+
+  ${!isFinal ? `<p style="color: #718096;">If you've already sent an updated certificate, please ignore this email.</p>` : ''}
+
+  <p>Questions? Reply to this email and we'll help.</p>
+
+  <p>Thanks,<br>${escapeHtml(builderName)} Compliance Team</p>
+
+  <div class="footer">
+    <p>Powered by RiskShield AI - Automated Insurance Compliance</p>
+  </div>
+</body>
+</html>`
+
+  return sendEmail({
+    to: recipientEmail,
+    subject,
+    html: htmlBody,
+    text: body,
+    cc: ccEmails
   })
 }
 
@@ -470,22 +787,23 @@ export async function sendExpirationReminderEmail(params: {
 
   const isUrgent = daysUntilExpiry <= 7
 
-  const subject = `${isUrgent ? 'URGENT: ' : ''}Certificate Expiring Soon - ${subcontractorName} / ${projectName}`
+  const subject = `${isUrgent ? 'Urgent: ' : ''}Your insurance certificate expires ${daysUntilExpiry <= 0 ? 'today' : `in ${daysUntilExpiry} days`} - ${projectName}`
 
-  const body = `Dear ${recipientName},
+  const body = `Hi ${recipientName},
 
-This is a reminder that the Certificate of Currency for ${subcontractorName} (ABN: ${subcontractorAbn}) will expire on ${expiryDate}.
+Just a heads up - the insurance certificate for ${subcontractorName} on the ${projectName} project ${daysUntilExpiry <= 0 ? 'has expired' : `expires on ${expiryDate}`}.
 
-PROJECT: ${projectName}
-DAYS UNTIL EXPIRY: ${daysUntilExpiry}
+${isUrgent ? "This is urgent - you'll need to get a new certificate to keep working on site.\n\n" : ''}WHAT TO DO:
+1. Contact your insurance broker or provider
+2. Get a new Certificate of Currency
+3. Upload it here: ${uploadLink || 'Contact the builder for upload instructions'}
 
-ACTION REQUIRED:
-Please provide an updated Certificate of Currency before the expiration date to maintain compliance.
+If you've already sent a new certificate, you can ignore this message.
 
-${uploadLink ? `You can upload the updated certificate here: ${uploadLink}\n\n` : ''}If you have any questions, please contact us.
+Questions? Just reply to this email.
 
-Best regards,
-RiskShield AI Compliance Team`
+Thanks,
+The Compliance Team`
 
   return sendEmail({
     to: recipientEmail,

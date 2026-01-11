@@ -39,11 +39,29 @@ export async function GET(request: NextRequest) {
       cursor: offset > 0 ? String(offset) : undefined,
     })
 
+    // Transform Convex format to API format
+    const transformedProjects = result.projects.map((project: any) => ({
+      id: project._id,
+      name: project.name,
+      address: project.address || null,
+      state: project.state || null,
+      status: project.status,
+      start_date: project.startDate ? new Date(project.startDate).toISOString() : null,
+      end_date: project.endDate ? new Date(project.endDate).toISOString() : null,
+      estimated_value: project.estimatedValue || null,
+      forwarding_email: project.forwardingEmail || null,
+      project_manager_name: project.project_manager_name || null,
+      subcontractor_count: project.subcontractor_count || 0,
+      compliant_count: project.compliant_count || 0,
+      created_at: new Date(project._creationTime).toISOString(),
+      updated_at: project.updatedAt ? new Date(project.updatedAt).toISOString() : null,
+    }))
+
     // Return both old format (projects array) for backward compatibility
     // and new paginated format
-    const paginatedResponse = createPaginatedResponse(result.projects, result.total, { page, limit, offset })
+    const paginatedResponse = createPaginatedResponse(transformedProjects, result.total, { page, limit, offset })
     return NextResponse.json({
-      projects: result.projects,  // Backward compatibility
+      projects: transformedProjects,  // Backward compatibility
       ...paginatedResponse  // New pagination structure
     })
   } catch (error) {

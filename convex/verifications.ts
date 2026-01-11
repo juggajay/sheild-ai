@@ -1029,6 +1029,7 @@ export const rejectVerification = mutation({
     })
 
     // Create communication record for deficiency email
+    // Send to subcontractor contact first (they contact their own broker)
     if (subcontractor && project) {
       await ctx.db.insert("communications", {
         subcontractorId: subcontractor._id,
@@ -1036,7 +1037,7 @@ export const rejectVerification = mutation({
         verificationId: args.id,
         type: "deficiency",
         channel: "email",
-        recipientEmail: subcontractor.brokerEmail || subcontractor.contactEmail,
+        recipientEmail: subcontractor.contactEmail || subcontractor.brokerEmail,
         status: "pending",
         updatedAt: Date.now(),
       })
@@ -1045,7 +1046,7 @@ export const rejectVerification = mutation({
     return {
       success: true,
       shouldSendEmail: true,
-      subcontractorEmail: subcontractor?.brokerEmail || subcontractor?.contactEmail,
+      subcontractorEmail: subcontractor?.contactEmail || subcontractor?.brokerEmail,
       subcontractorName: subcontractor?.name,
       projectName: project?.name,
     }
@@ -1081,15 +1082,16 @@ export const requestClearerCopy = mutation({
     }
 
     // Create communication record for clearer copy request
+    // Send to subcontractor contact first (they contact their own broker)
     await ctx.db.insert("communications", {
       subcontractorId: subcontractor._id,
       projectId: project._id,
       verificationId: args.id,
       type: "follow_up",
       channel: "email",
-      recipientEmail: subcontractor.brokerEmail || subcontractor.contactEmail,
-      subject: `Clearer Copy Required: Certificate of Currency for ${project.name}`,
-      body: args.message || "The document you submitted is unclear. Please re-upload a clearer copy.",
+      recipientEmail: subcontractor.contactEmail || subcontractor.brokerEmail,
+      subject: `We need a clearer copy of your insurance certificate - ${project.name}`,
+      body: args.message || "The document you sent us is hard to read. Please upload a clearer copy.",
       status: "pending",
       updatedAt: Date.now(),
     })
@@ -1110,7 +1112,7 @@ export const requestClearerCopy = mutation({
 
     return {
       success: true,
-      subcontractorEmail: subcontractor.brokerEmail || subcontractor.contactEmail,
+      subcontractorEmail: subcontractor.contactEmail || subcontractor.brokerEmail,
       subcontractorName: subcontractor.name,
       projectName: project.name,
     }
