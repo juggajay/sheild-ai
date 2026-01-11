@@ -1,6 +1,15 @@
 import { v } from "convex/values"
-import { mutation, query } from "./_generated/server"
+import { mutation, query, internalQuery } from "./_generated/server"
 import { Id } from "./_generated/dataModel"
+import { api } from "./_generated/api"
+
+// Internal query: Get verification by ID (for cron jobs)
+export const getByIdInternal = internalQuery({
+  args: { id: v.id("verifications") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id)
+  },
+})
 
 // Verification status type validator
 const verificationStatus = v.union(
@@ -629,6 +638,481 @@ export const getForExpirationReminder = query({
       subcontractor_name: subcontractor?.name,
       contact_email: subcontractor?.contactEmail,
       broker_email: subcontractor?.brokerEmail,
+    }
+  },
+})
+
+// ============================================
+// PENDING REVIEWS QUERIES AND MUTATIONS
+// ============================================
+
+// Get count of verifications with status="review" for a company
+export const getPendingReviewsCount = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    // Get all active projects for company
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    const activeProjects = projects.filter((p) => p.status !== "completed")
+    if (activeProjects.length === 0) return 0
+
+    // Get all verifications for active projects in parallel
+    const verPromises = activeProjects.map((project) =>
+      ctx.db
+        .query("verifications")
+        .withIndex("by_status", (q) =>
+          q.eq("projectId", project._id).eq("status", "review")
+        )
+        .collect()
+    )
+    const verArrays = await Promise.all(verPromises)
+
+    // Count total
+    return verArrays.reduce((sum, arr) => sum + arr.length, 0)
+  },
+})
+
+// Get all pending reviews for a company (list page)
+export const getPendingReviews = query({
+  args: { companyId: v.id("companies") },
+  handler: async (ctx, args) => {
+    // Get all active projects for company
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_company", (q) => q.eq("companyId", args.companyId))
+      .collect()
+
+    const activeProjects = projects.filter((p) => p.status !== "completed")
+    if (activeProjects.length === 0) return []
+
+    const projectMap = new Map(activeProjects.map((p) => [p._id.toString(), p]))
+
+    // Get all verifications with status="review" for active projects
+    const verPromises = activeProjects.map((project) =>
+      ctx.db
+        .query("verifications")
+        .withIndex("by_status", (q) =>
+          q.eq("projectId", project._id).eq("status", "review")
+        )
+        .collect()
+    )
+    const verArrays = await Promise.all(verPromises)
+    const allReviewVerifications = verArrays.flat()
+
+    if (allReviewVerifications.length === 0) return []
+
+    // Get all documents for these verifications
+    const docIds = allReviewVerifications.map((v) => v.cocDocumentId)
+    const docPromises = docIds.map((id) => ctx.db.get(id))
+    const docsArray = await Promise.all(docPromises)
+    const docMap = new Map(
+      docsArray
+        .filter((d): d is NonNullable<typeof d> => d !== null)
+        .map((d) => [d._id.toString(), d])
+    )
+
+    // Get all subcontractors
+    const subIds = Array.from(
+      new Set(
+        docsArray
+          .filter((d): d is NonNullable<typeof d> => d !== null)
+          .map((d) => d.subcontractorId)
+      )
+    )
+    const subPromises = subIds.map((id) => ctx.db.get(id))
+    const subsArray = await Promise.all(subPromises)
+    const subMap = new Map(
+      subsArray
+        .filter((s): s is NonNullable<typeof s> => s !== null)
+        .map((s) => [s._id.toString(), s])
+    )
+
+    // Build result list
+    const results: Array<{
+      id: string
+      verificationId: string
+      subcontractorId: string
+      subcontractorName: string
+      projectId: string
+      projectName: string
+      confidenceScore: number | null
+      documentId: string
+      fileName: string | null
+      submittedAt: number
+      daysWaiting: number
+      lowConfidenceFields: string[]
+    }> = []
+
+    for (const verification of allReviewVerifications) {
+      const doc = docMap.get(verification.cocDocumentId.toString())
+      if (!doc) continue
+
+      const subcontractor = subMap.get(doc.subcontractorId.toString())
+      if (!subcontractor) continue
+
+      const project = projectMap.get(verification.projectId.toString())
+      if (!project) continue
+
+      // Calculate days waiting
+      const submittedAt = doc.receivedAt || verification._creationTime
+      const daysWaiting = Math.floor(
+        (Date.now() - submittedAt) / (1000 * 60 * 60 * 24)
+      )
+
+      // Find low confidence fields
+      const lowConfidenceFields: string[] = []
+      const extractedData = verification.extractedData as Record<string, unknown> | null
+      if (extractedData?.field_confidences) {
+        const fieldConfidences = extractedData.field_confidences as Record<string, number>
+        for (const [field, confidence] of Object.entries(fieldConfidences)) {
+          if (confidence < 80) {
+            lowConfidenceFields.push(field)
+          }
+        }
+      }
+
+      results.push({
+        id: verification._id,
+        verificationId: verification._id,
+        subcontractorId: subcontractor._id,
+        subcontractorName: subcontractor.name,
+        projectId: project._id,
+        projectName: project.name,
+        confidenceScore: verification.confidenceScore || null,
+        documentId: doc._id,
+        fileName: doc.fileName || null,
+        submittedAt,
+        daysWaiting,
+        lowConfidenceFields,
+      })
+    }
+
+    // Sort by oldest first (FIFO queue)
+    results.sort((a, b) => a.submittedAt - b.submittedAt)
+
+    return results
+  },
+})
+
+// Get full verification details for review (detail page)
+export const getVerificationForReview = query({
+  args: { id: v.id("verifications") },
+  handler: async (ctx, args) => {
+    const verification = await ctx.db.get(args.id)
+    if (!verification) return null
+
+    const document = await ctx.db.get(verification.cocDocumentId)
+    if (!document) return null
+
+    const [project, subcontractor] = await Promise.all([
+      ctx.db.get(verification.projectId),
+      ctx.db.get(document.subcontractorId),
+    ])
+
+    if (!project || !subcontractor) return null
+
+    // Get insurance requirements for this project
+    const requirements = await ctx.db
+      .query("insuranceRequirements")
+      .withIndex("by_project", (q) => q.eq("projectId", project._id))
+      .collect()
+
+    // Get project subcontractor link for status
+    const projectSubcontractor = await ctx.db
+      .query("projectSubcontractors")
+      .withIndex("by_project_subcontractor", (q) =>
+        q.eq("projectId", project._id).eq("subcontractorId", subcontractor._id)
+      )
+      .first()
+
+    // Get verified by user if exists
+    let verifiedByUser = null
+    if (verification.verifiedByUserId) {
+      const user = await ctx.db.get(verification.verifiedByUserId)
+      if (user) {
+        verifiedByUser = {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+        }
+      }
+    }
+
+    return {
+      verification: {
+        id: verification._id,
+        status: verification.status,
+        confidenceScore: verification.confidenceScore,
+        extractedData: verification.extractedData,
+        checks: verification.checks,
+        deficiencies: verification.deficiencies,
+        verifiedAt: verification.verifiedAt,
+        createdAt: verification._creationTime,
+      },
+      document: {
+        id: document._id,
+        fileName: document.fileName,
+        fileUrl: document.fileUrl,
+        fileSize: document.fileSize,
+        receivedAt: document.receivedAt,
+        source: document.source,
+      },
+      project: {
+        id: project._id,
+        name: project.name,
+        state: project.state,
+      },
+      subcontractor: {
+        id: subcontractor._id,
+        name: subcontractor.name,
+        abn: subcontractor.abn,
+        contactName: subcontractor.contactName,
+        contactEmail: subcontractor.contactEmail,
+        brokerName: subcontractor.brokerName,
+        brokerEmail: subcontractor.brokerEmail,
+      },
+      requirements: requirements.map((r) => ({
+        coverageType: r.coverageType,
+        minimumLimit: r.minimumLimit,
+        limitType: r.limitType,
+        maximumExcess: r.maximumExcess,
+        principalIndemnityRequired: r.principalIndemnityRequired,
+        crossLiabilityRequired: r.crossLiabilityRequired,
+        waiverOfSubrogationRequired: r.waiverOfSubrogationRequired,
+        principalNamingRequired: r.principalNamingRequired,
+      })),
+      projectSubcontractorId: projectSubcontractor?._id || null,
+      verifiedByUser,
+    }
+  },
+})
+
+// Approve verification (manual review action)
+export const approveVerification = mutation({
+  args: {
+    id: v.id("verifications"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const verification = await ctx.db.get(args.id)
+    if (!verification) throw new Error("Verification not found")
+
+    const previousStatus = verification.status
+
+    // Update verification status
+    await ctx.db.patch(args.id, {
+      status: "pass",
+      verifiedByUserId: args.userId,
+      verifiedAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    // Get document to find project subcontractor
+    const document = await ctx.db.get(verification.cocDocumentId)
+    if (document) {
+      // Update project subcontractor status to compliant
+      const projectSubcontractor = await ctx.db
+        .query("projectSubcontractors")
+        .withIndex("by_project_subcontractor", (q) =>
+          q
+            .eq("projectId", verification.projectId)
+            .eq("subcontractorId", document.subcontractorId)
+        )
+        .first()
+
+      if (projectSubcontractor) {
+        await ctx.db.patch(projectSubcontractor._id, {
+          status: "compliant",
+          updatedAt: Date.now(),
+        })
+      }
+    }
+
+    // Get details for audit log
+    const project = await ctx.db.get(verification.projectId)
+    const subcontractor = document
+      ? await ctx.db.get(document.subcontractorId)
+      : null
+
+    // Create audit log
+    await ctx.db.insert("auditLogs", {
+      companyId: project?.companyId,
+      userId: args.userId,
+      entityType: "verification",
+      entityId: args.id,
+      action: "verification_manually_approved",
+      details: {
+        previousStatus,
+        newStatus: "pass",
+        subcontractorName: subcontractor?.name,
+        projectName: project?.name,
+      },
+    })
+
+    return { success: true }
+  },
+})
+
+// Reject verification (manual review action)
+export const rejectVerification = mutation({
+  args: {
+    id: v.id("verifications"),
+    userId: v.id("users"),
+    reason: v.optional(v.string()),
+    deficiencies: v.optional(v.array(v.any())),
+  },
+  handler: async (ctx, args) => {
+    const verification = await ctx.db.get(args.id)
+    if (!verification) throw new Error("Verification not found")
+
+    const previousStatus = verification.status
+
+    // Merge existing deficiencies with new ones
+    const existingDeficiencies = (verification.deficiencies || []) as Array<unknown>
+    const newDeficiencies = args.deficiencies || []
+    const allDeficiencies = [...existingDeficiencies, ...newDeficiencies]
+
+    // Update verification status
+    await ctx.db.patch(args.id, {
+      status: "fail",
+      deficiencies: allDeficiencies,
+      verifiedByUserId: args.userId,
+      verifiedAt: Date.now(),
+      updatedAt: Date.now(),
+    })
+
+    // Get document to find project subcontractor
+    const document = await ctx.db.get(verification.cocDocumentId)
+    if (document) {
+      // Update project subcontractor status to non_compliant
+      const projectSubcontractor = await ctx.db
+        .query("projectSubcontractors")
+        .withIndex("by_project_subcontractor", (q) =>
+          q
+            .eq("projectId", verification.projectId)
+            .eq("subcontractorId", document.subcontractorId)
+        )
+        .first()
+
+      if (projectSubcontractor) {
+        await ctx.db.patch(projectSubcontractor._id, {
+          status: "non_compliant",
+          updatedAt: Date.now(),
+        })
+      }
+    }
+
+    // Get details for audit log
+    const project = await ctx.db.get(verification.projectId)
+    const subcontractor = document
+      ? await ctx.db.get(document.subcontractorId)
+      : null
+
+    // Create audit log
+    await ctx.db.insert("auditLogs", {
+      companyId: project?.companyId,
+      userId: args.userId,
+      entityType: "verification",
+      entityId: args.id,
+      action: "verification_manually_rejected",
+      details: {
+        previousStatus,
+        newStatus: "fail",
+        reason: args.reason,
+        subcontractorName: subcontractor?.name,
+        projectName: project?.name,
+        deficienciesAdded: newDeficiencies.length,
+      },
+    })
+
+    // Create communication record for deficiency email
+    if (subcontractor && project) {
+      await ctx.db.insert("communications", {
+        subcontractorId: subcontractor._id,
+        projectId: project._id,
+        verificationId: args.id,
+        type: "deficiency",
+        channel: "email",
+        recipientEmail: subcontractor.brokerEmail || subcontractor.contactEmail,
+        status: "pending",
+        updatedAt: Date.now(),
+      })
+    }
+
+    return {
+      success: true,
+      shouldSendEmail: true,
+      subcontractorEmail: subcontractor?.brokerEmail || subcontractor?.contactEmail,
+      subcontractorName: subcontractor?.name,
+      projectName: project?.name,
+    }
+  },
+})
+
+// Request clearer copy (manual review action)
+export const requestClearerCopy = mutation({
+  args: {
+    id: v.id("verifications"),
+    userId: v.id("users"),
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const verification = await ctx.db.get(args.id)
+    if (!verification) throw new Error("Verification not found")
+
+    // Keep status as review but log the request
+    await ctx.db.patch(args.id, {
+      updatedAt: Date.now(),
+    })
+
+    // Get document to find subcontractor
+    const document = await ctx.db.get(verification.cocDocumentId)
+    if (!document) throw new Error("Document not found")
+
+    // Get details
+    const project = await ctx.db.get(verification.projectId)
+    const subcontractor = await ctx.db.get(document.subcontractorId)
+
+    if (!project || !subcontractor) {
+      throw new Error("Project or subcontractor not found")
+    }
+
+    // Create communication record for clearer copy request
+    await ctx.db.insert("communications", {
+      subcontractorId: subcontractor._id,
+      projectId: project._id,
+      verificationId: args.id,
+      type: "follow_up",
+      channel: "email",
+      recipientEmail: subcontractor.brokerEmail || subcontractor.contactEmail,
+      subject: `Clearer Copy Required: Certificate of Currency for ${project.name}`,
+      body: args.message || "The document you submitted is unclear. Please re-upload a clearer copy.",
+      status: "pending",
+      updatedAt: Date.now(),
+    })
+
+    // Create audit log
+    await ctx.db.insert("auditLogs", {
+      companyId: project.companyId,
+      userId: args.userId,
+      entityType: "verification",
+      entityId: args.id,
+      action: "clearer_copy_requested",
+      details: {
+        subcontractorName: subcontractor.name,
+        projectName: project.name,
+        message: args.message,
+      },
+    })
+
+    return {
+      success: true,
+      subcontractorEmail: subcontractor.brokerEmail || subcontractor.contactEmail,
+      subcontractorName: subcontractor.name,
+      projectName: project.name,
     }
   },
 })

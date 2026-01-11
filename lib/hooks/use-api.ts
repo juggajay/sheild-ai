@@ -120,6 +120,22 @@ async function postApi<T>(url: string, data: any): Promise<T> {
   return res.json()
 }
 
+// Pending Review interface
+interface PendingReview {
+  id: string
+  verificationId: string
+  subcontractorId: string
+  subcontractorName: string
+  projectId: string
+  projectName: string
+  confidenceScore: number | null
+  documentId: string
+  fileName: string | null
+  submittedAt: number
+  daysWaiting: number
+  lowConfidenceFields: string[]
+}
+
 // Query Keys
 export const queryKeys = {
   user: ['user'] as const,
@@ -132,6 +148,8 @@ export const queryKeys = {
   documents: ['documents'] as const,
   document: (id: string) => ['document', id] as const,
   notifications: ['notifications'] as const,
+  pendingReviews: ['pending-reviews'] as const,
+  reviewDetail: (id: string) => ['review-detail', id] as const,
 }
 
 // User hooks
@@ -260,6 +278,68 @@ export function useNotifications(limit = 10) {
     gcTime: 5 * 60 * 1000,
     refetchInterval: 60 * 1000, // Refresh every minute
     refetchIntervalInBackground: false, // Only poll when tab is focused
+  })
+}
+
+// Pending Reviews hooks
+export function usePendingReviews() {
+  return useQuery({
+    queryKey: queryKeys.pendingReviews,
+    queryFn: () => fetchApi<{ reviews: PendingReview[] }>('/api/reviews').then(r => r.reviews),
+    staleTime: 60 * 1000, // 1 minute
+    gcTime: 5 * 60 * 1000,
+  })
+}
+
+export function useReviewDetail(id: string) {
+  return useQuery({
+    queryKey: queryKeys.reviewDetail(id),
+    queryFn: () => fetchApi<any>(`/api/reviews/${id}`),
+    staleTime: 60 * 1000,
+    gcTime: 5 * 60 * 1000,
+    enabled: !!id,
+  })
+}
+
+export function useApproveVerification() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (id: string) => postApi<{ success: boolean }>(`/api/reviews/${id}/approve`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.pendingReviews })
+      queryClient.invalidateQueries({ queryKey: queryKeys.morningBrief })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-data'] })
+    },
+  })
+}
+
+export function useRejectVerification() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: { id: string; reason?: string; deficiencies?: any[] }) =>
+      postApi<{ success: boolean; shouldSendEmail: boolean }>(`/api/reviews/${data.id}/reject`, {
+        reason: data.reason,
+        deficiencies: data.deficiencies,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.pendingReviews })
+      queryClient.invalidateQueries({ queryKey: queryKeys.morningBrief })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-data'] })
+    },
+  })
+}
+
+export function useRequestClearerCopy() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: { id: string; message?: string }) =>
+      postApi<{ success: boolean }>(`/api/reviews/${data.id}/request-copy`, { message: data.message }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.pendingReviews })
+    },
   })
 }
 

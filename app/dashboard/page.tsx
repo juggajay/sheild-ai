@@ -222,12 +222,14 @@ export default function DashboardPage() {
             description="With subcontractors"
             icon={<FolderKanban className="h-5 w-5 text-blue-500" />}
           />
-          <StatCard
-            title="Pending Reviews"
-            value={stats?.pendingReviews?.toString() || "0"}
-            description="COCs awaiting review"
-            icon={<Clock className="h-5 w-5 text-amber-500" />}
-          />
+          <Link href="/dashboard/reviews" className="block hover:ring-2 hover:ring-primary hover:ring-offset-2 rounded-lg transition-all">
+            <StatCard
+              title="Pending Reviews"
+              value={stats?.pendingReviews?.toString() || "0"}
+              description="COCs awaiting review"
+              icon={<Clock className="h-5 w-5 text-amber-500" />}
+            />
+          </Link>
           <StatCard
             title="Stop Work Risks"
             value={stats?.stopWorkCount?.toString() || "0"}

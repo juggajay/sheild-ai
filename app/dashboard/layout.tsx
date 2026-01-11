@@ -17,7 +17,8 @@ import {
   UserCog,
   CreditCard,
   Menu,
-  X
+  X,
+  ClipboardCheck
 } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
 
@@ -276,6 +277,12 @@ function Sidebar({ user, pathname, onLogout, isOpen, onToggle }: { user: User; p
           label="Documents"
           href="/dashboard/documents"
           active={pathname.startsWith('/dashboard/documents')}
+        />
+        <NavItem
+          icon={<ClipboardCheck />}
+          label="Reviews"
+          href="/dashboard/reviews"
+          active={pathname.startsWith('/dashboard/reviews')}
         />
         <NavItem
           icon={<AlertTriangle />}

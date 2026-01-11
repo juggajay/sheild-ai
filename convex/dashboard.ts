@@ -712,10 +712,17 @@ export const getMorningBrief = query({
     let nonCompliant = 0
     let pending = 0
     let exception = 0
-    let pendingReviews = 0
+    let pendingReviews = 0 // Verifications with status="review" (human review needed)
     let cocTotal = 0
     let cocAutoApproved = 0
     let cocNeedsReview = 0
+
+    // Count verifications with status="review" (human review pending)
+    for (const v of verifications) {
+      if (v.status === "review") {
+        pendingReviews++
+      }
+    }
 
     const stopWorkRisks: Array<{
       id: string
@@ -793,8 +800,6 @@ export const getMorningBrief = query({
 
     // Process documents (all in memory)
     for (const doc of docs) {
-      if (doc.processingStatus === "pending") pendingReviews++
-
       // Check if new (last 24 hours)
       if (doc.receivedAt && doc.receivedAt >= yesterday) {
         const subcontractor = subcontractorMap.get(doc.subcontractorId)
