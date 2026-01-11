@@ -43,6 +43,8 @@ function BillingContent() {
     }
   }, [searchParams, router])
 
+  const [error, setError] = useState<string | null>(null)
+
   const handleSelectPlan = async (tier: string) => {
     if (tier === 'enterprise') {
       // Open email to sales
@@ -51,6 +53,7 @@ function BillingContent() {
     }
 
     setIsLoading(tier)
+    setError(null)
     try {
       const response = await fetch('/api/stripe/create-checkout-session', {
         method: 'POST',
@@ -60,16 +63,22 @@ function BillingContent() {
 
       const data = await response.json()
 
+      if (!response.ok) {
+        setError(data.error || 'Failed to create checkout session')
+        return
+      }
+
       if (data.checkoutUrl) {
         window.location.href = data.checkoutUrl
       } else if (data.redirectUrl) {
         // Simulated mode
         window.location.href = data.redirectUrl
       } else {
-        console.error('Checkout error:', data.error)
+        setError('No checkout URL returned')
       }
-    } catch (error) {
-      console.error('Failed to create checkout session:', error)
+    } catch (err) {
+      console.error('Failed to create checkout session:', err)
+      setError('Network error - please try again')
     } finally {
       setIsLoading(null)
     }
@@ -136,6 +145,20 @@ function BillingContent() {
               <p className="font-medium text-green-800">Subscription Updated Successfully!</p>
               <p className="text-sm text-green-600">Your plan has been updated. Changes are now active.</p>
             </div>
+          </div>
+        )}
+
+        {/* Error Message */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
+            <AlertCircle className="h-5 w-5 text-red-600" />
+            <div>
+              <p className="font-medium text-red-800">Error</p>
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setError(null)} className="ml-auto">
+              Dismiss
+            </Button>
           </div>
         )}
 
