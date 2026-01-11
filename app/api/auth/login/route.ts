@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       companyId: user.companyId,
       userId: user._id,
       entityType: 'user',
-      entityId: user._id,
+      entityId: user._id.toString(),
       action: 'login',
       details: { email: user.email },
     })

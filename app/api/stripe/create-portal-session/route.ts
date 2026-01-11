@@ -83,7 +83,7 @@ export async function POST(request: NextRequest) {
       companyId: company._id,
       userId: user._id,
       entityType: 'subscription',
-      entityId: company._id,
+      entityId: company._id.toString(),
       action: 'access_portal',
       details: {
         stripe_customer_id: stripeCustomerId,

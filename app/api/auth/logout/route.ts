@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
           companyId: sessionData.user.companyId,
           userId: sessionData.user._id,
           entityType: 'user',
-          entityId: sessionData.user._id,
+          entityId: sessionData.user._id.toString(),
           action: 'logout',
           details: { email: sessionData.user.email },
         })

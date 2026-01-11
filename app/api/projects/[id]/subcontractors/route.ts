@@ -138,7 +138,7 @@ export async function POST(
       companyId: user.companyId,
       userId: user._id,
       entityType: 'project_subcontractor',
-      entityId: projectSubcontractorId,
+      entityId: projectSubcontractorId.toString(),
       action: 'create',
       details: {
         projectId: id,
@@ -254,7 +254,7 @@ export async function DELETE(
       companyId: user.companyId,
       userId: user._id,
       entityType: 'project_subcontractor',
-      entityId: projectSubcontractor._id,
+      entityId: projectSubcontractor._id.toString(),
       action: 'delete',
       details: {
         projectId: id,
