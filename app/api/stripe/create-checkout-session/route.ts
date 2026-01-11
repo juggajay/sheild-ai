@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@/convex/_generated/api'
 import type { Id } from '@/convex/_generated/dataModel'
-import { getUserByTokenAsync } from '@/lib/auth'
 import {
   createCheckoutSession,
   createOrGetCustomer,
@@ -28,10 +27,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = await getUserByTokenAsync(token)
-    if (!user) {
+    // Get user from Convex
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
+
+    const { user, company } = sessionData
 
     // Only admin can manage billing
     if (user.role !== 'admin') {
@@ -41,12 +43,14 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!user.company_id) {
+    if (!company) {
       return NextResponse.json(
         { error: 'No company associated with user' },
         { status: 404 }
       )
     }
+
+    const companyId = company._id
 
     const body = await request.json()
     const { tier, billingInterval = 'monthly' } = body as {
@@ -81,15 +85,6 @@ export async function POST(request: NextRequest) {
 
     const subscriptionTier = tier as Exclude<SubscriptionTier, 'trial' | 'subcontractor'>
 
-    // Get company from Convex
-    const company = await convex.query(api.companies.getById, {
-      id: user.company_id as Id<"companies">,
-    })
-
-    if (!company) {
-      return NextResponse.json({ error: 'Company not found' }, { status: 404 })
-    }
-
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
     // Check if Stripe is configured
@@ -104,7 +99,7 @@ export async function POST(request: NextRequest) {
 
       // Update company with simulated subscription
       await convex.mutation(api.companies.updateSubscription, {
-        id: user.company_id as Id<"companies">,
+        id: companyId,
         subscriptionTier: subscriptionTier,
         subscriptionStatus: trialEndsAt ? 'trialing' : 'active',
         trialEndsAt,
@@ -112,10 +107,10 @@ export async function POST(request: NextRequest) {
 
       // Log the action
       await convex.mutation(api.auditLogs.create, {
-        companyId: user.company_id as Id<"companies">,
-        userId: user.id as Id<"users">,
+        companyId: companyId,
+        userId: user._id,
         entityType: 'subscription',
-        entityId: user.company_id,
+        entityId: companyId,
         action: 'create_checkout',
         details: {
           tier: subscriptionTier,
@@ -140,14 +135,14 @@ export async function POST(request: NextRequest) {
     // Get or create Stripe customer
     const stripeCustomerId = await createOrGetCustomer({
       email: user.email,
-      companyId: user.company_id,
+      companyId: companyId,
       companyName: company.name,
     })
 
     // Update company with Stripe customer ID if not already set
     if (!existingStripeCustomerId) {
       await convex.mutation(api.companies.updateStripeCustomerId, {
-        id: user.company_id as Id<"companies">,
+        id: companyId,
         stripeCustomerId,
       })
     }
@@ -158,7 +153,7 @@ export async function POST(request: NextRequest) {
       customerEmail: user.email,
       tier: subscriptionTier,
       billingInterval,
-      companyId: user.company_id,
+      companyId: companyId,
       successUrl: `${appUrl}/dashboard/settings/billing?success=true`,
       cancelUrl: `${appUrl}/dashboard/settings/billing?canceled=true`,
       trialDays: billingInterval === 'monthly' ? TRIAL_CONFIG.durationDays : 0,
@@ -166,10 +161,10 @@ export async function POST(request: NextRequest) {
 
     // Log the action
     await convex.mutation(api.auditLogs.create, {
-      companyId: user.company_id as Id<"companies">,
-      userId: user.id as Id<"users">,
+      companyId: companyId,
+      userId: user._id,
       entityType: 'subscription',
-      entityId: user.company_id,
+      entityId: companyId,
       action: 'create_checkout',
       details: {
         tier: subscriptionTier,

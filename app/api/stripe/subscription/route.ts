@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@/convex/_generated/api'
-import type { Id } from '@/convex/_generated/dataModel'
-import { getUserByTokenAsync } from '@/lib/auth'
 import {
   PRICING_PLANS,
   SUBCONTRACTOR_PLAN,
@@ -26,12 +24,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = await getUserByTokenAsync(token)
-    if (!user) {
+    // Get user from Convex
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
 
-    if (!user.company_id) {
+    const { company: userCompany } = sessionData
+
+    if (!userCompany) {
       return NextResponse.json(
         { error: 'No company associated with user' },
         { status: 404 }
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
 
     // Get subscription details from Convex
     const details = await convex.query(api.companies.getSubscriptionDetails, {
-      companyId: user.company_id as Id<"companies">,
+      companyId: userCompany._id,
     })
 
     if (!details) {

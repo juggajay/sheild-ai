@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ConvexHttpClient } from 'convex/browser'
 import { api } from '@/convex/_generated/api'
-import type { Id } from '@/convex/_generated/dataModel'
-import { getUserByTokenAsync } from '@/lib/auth'
 import { createPortalSession, isStripeConfigured } from '@/lib/stripe'
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!)
@@ -25,10 +23,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
-    const user = await getUserByTokenAsync(token)
-    if (!user) {
+    // Get user from Convex
+    const sessionData = await convex.query(api.auth.getUserWithSession, { token })
+    if (!sessionData) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
     }
+
+    const { user, company } = sessionData
 
     // Only admin can manage billing
     if (user.role !== 'admin') {
@@ -38,20 +39,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!user.company_id) {
+    if (!company) {
       return NextResponse.json(
         { error: 'No company associated with user' },
         { status: 404 }
       )
-    }
-
-    // Get company from Convex
-    const company = await convex.query(api.companies.getById, {
-      id: user.company_id as Id<"companies">,
-    })
-
-    if (!company) {
-      return NextResponse.json({ error: 'Company not found' }, { status: 404 })
     }
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
@@ -88,10 +80,10 @@ export async function POST(request: NextRequest) {
 
     // Log the action
     await convex.mutation(api.auditLogs.create, {
-      companyId: user.company_id as Id<"companies">,
-      userId: user.id as Id<"users">,
+      companyId: company._id,
+      userId: user._id,
       entityType: 'subscription',
-      entityId: user.company_id,
+      entityId: company._id,
       action: 'access_portal',
       details: {
         stripe_customer_id: stripeCustomerId,
